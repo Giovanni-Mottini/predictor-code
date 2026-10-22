@@ -1,0 +1,14 @@
+{
+  "policy_id": "2026-10-03-confirmed-v1",
+  "active_modalities": ["xsens", "garmin", "clinical"],
+  "ignored_xsens_activities": ["mot1", "mot2"],
+  "numeric_limb_codes": {"00": "non_paretic", "0": "non_paretic", "01": "paretic", "1": "paretic"},
+  "expected_task_repetitions": 4,
+  "expected_task_marker_count": 5,
+  "conflicts": "flag_and_ignore",
+  "overlap_assumption": "same_acquisition_pending_professor_verification",
+  "xsens_preference": "full_recording",
+  "garmin_preference": "archive",
+  "sani_protocol": {"source": "Protocollo sani.pdf", "normal_sides_pages": [6, 10], "simulation_pages": [8, 9, 10], "markers_page": 6},
+  "simulation_assignment": "unknown_until_subject_assignment_table_is_available"
+}

@@ -1,0 +1,479 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:predictor:inventory:0.2.0",
+  "title": "PREDICTOR inventory 0.2.0",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "source_root": {
+      "type": "string"
+    },
+    "scan_started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scan_finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scan_scope": {
+      "const": "local_download_snapshot"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^src_[0-9a-f]{24}$"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "cohort": {
+            "enum": [
+              "SANI",
+              "PAZIENTI",
+              "CONTROLLO PAZIENTI"
+            ]
+          },
+          "subject_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_subject_folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mtime_ns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extension": {
+            "type": "string"
+          },
+          "modality": {
+            "enum": [
+              "xsens",
+              "garmin",
+              "motore",
+              "clinical",
+              "unknown"
+            ]
+          },
+          "artifact_kind": {
+            "type": "string"
+          },
+          "parsed_name": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "naming_variant": {
+                    "enum": [
+                      "clinical_code",
+                      "timepoint_first",
+                      "activity_first",
+                      "individual_repetition",
+                      "activity_side"
+                    ]
+                  },
+                  "filename_subject_id": {
+                    "type": "string"
+                  },
+                  "activity": {
+                    "enum": [
+                      "task1",
+                      "task2",
+                      "task3",
+                      "task4",
+                      "mot1",
+                      "mot2",
+                      "box_and_blocks"
+                    ]
+                  },
+                  "task": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 4
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timepoint": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^T\\d+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "protocol_day": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "repetition": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "original_limb_code": {
+                    "type": "string"
+                  },
+                  "anatomical_side": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "left",
+                          "right"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "representation": {
+                    "enum": [
+                      "full_recording",
+                      "individual_repetition"
+                    ]
+                  }
+                },
+                "required": [
+                  "naming_variant",
+                  "filename_subject_id",
+                  "activity",
+                  "task",
+                  "timepoint",
+                  "protocol_day",
+                  "repetition",
+                  "original_limb_code",
+                  "anatomical_side",
+                  "representation"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inspection_status": {
+            "enum": [
+              "not_inspected",
+              "package_metadata_readable",
+              "header_readable",
+              "archive_directory_readable",
+              "inspection_error"
+            ]
+          },
+          "sheets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "archive_members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "compressed_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "crc32": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}$"
+                },
+                "safe_path": {
+                  "type": "boolean"
+                },
+                "unique_path": {
+                  "type": "boolean"
+                },
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "inspection_status": {
+                  "enum": [
+                    "listed",
+                    "header_readable",
+                    "inspection_error"
+                  ]
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "size_bytes",
+                "compressed_bytes",
+                "crc32",
+                "safe_path",
+                "unique_path",
+                "columns",
+                "inspection_status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "disposition": {
+            "enum": [
+              "mapped",
+              "needs_review",
+              "deferred",
+              "preserve_only",
+              "excluded"
+            ]
+          },
+          "error": {
+            "type": "string"
+          },
+          "clinical_metadata": {
+            "type": "object"
+          },
+          "selection_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "selection_assumption": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duplicate_of_source_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "selected_archive_members": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "source_id",
+          "source_path",
+          "cohort",
+          "subject_id",
+          "source_subject_folder",
+          "size_bytes",
+          "mtime_ns",
+          "sha256",
+          "extension",
+          "modality",
+          "artifact_kind",
+          "parsed_name",
+          "inspection_status",
+          "sheets",
+          "columns",
+          "archive_members",
+          "issues",
+          "disposition",
+          "selection_reason",
+          "selection_assumption",
+          "duplicate_of_source_id",
+          "selected_archive_members"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cohort": {
+            "enum": [
+              "SANI",
+              "PAZIENTI",
+              "CONTROLLO PAZIENTI"
+            ]
+          },
+          "subject_id": {
+            "type": "string"
+          },
+          "source_subject_folder": {
+            "type": "string"
+          },
+          "participant_key": {
+            "type": "string"
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "modalities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evaluation_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evaluation_status": {
+            "enum": [
+              "available",
+              "not_collected_by_protocol",
+              "not_available_in_snapshot"
+            ]
+          }
+        },
+        "required": [
+          "cohort",
+          "subject_id",
+          "source_subject_folder",
+          "participant_key",
+          "file_count",
+          "size_bytes",
+          "modalities",
+          "evaluation_sources",
+          "evaluation_status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "source_path",
+          "severity",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "object"
+    },
+    "import_policy": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "source_root",
+    "scan_started_at",
+    "scan_finished_at",
+    "scan_scope",
+    "files",
+    "subjects",
+    "issues",
+    "summary",
+    "import_policy"
+  ],
+  "additionalProperties": false
+}

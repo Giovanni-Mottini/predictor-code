@@ -1,0 +1,3 @@
+-r requirements.txt
+-r predictor_import/requirements-dev.txt
+pandas>=2.3,<4

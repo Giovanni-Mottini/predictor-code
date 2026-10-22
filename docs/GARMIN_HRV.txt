@@ -1,0 +1,77 @@
+GARMIN HRV - THE "SEGMENTS" METHOD
+
+Code: garmin_code/garmin_hrv.py.  Use it with --hrv-method segments.
+The DEFAULT is the notebook method (see GARMIN_ASSESSMENTS.txt).
+Method ID: garmin-local-windows-explicit-bbi-v4 (21 Oct 2026).
+Raw beats only; Enhanced BBI is never read.
+
+Extra fields this method gives: VLF, LF, HF, LF/HF, SD1, SD2, SD2/SD1,
+ApEn, SampEn.
+
+These describe watch beats. They are not ECG and not proof of clinical meaning.
+
+
+1. WHICH BEATS ARE JOINED
+
+Inside each 6-hour block, two beats form a pair only if:
+- their rows are consecutive in the original file (same source and table)
+- they are at most 5 s apart          (--max-pair-gap-seconds)
+- the time step equals the next beat interval within 50 ms
+                                      (--hrv-clock-tolerance-ms)
+A missed beat, a removed row, a long gap or a gap marker breaks the chain.
+The beat filters (--bbi-screens, --bbi-local-median-pct) are optional
+and OFF by default, as for the notebook method.
+
+Time axis = the real UTC time stamps. Gaps are never closed up.
+Note: 86-92% of time steps match within 10 ms; the result barely changes
+between 10 and 300 ms.
+
+
+2. FREQUENCY (LF, HF, LF/HF, VLF)
+
+- full 5-minute pieces (300 s), no overlap, only inside continuous beats
+- cubic interpolation at 4 Hz, never across a break
+- Welch, Hann window, linear detrend
+- LF 0.04-0.15 Hz, HF 0.15-0.40 Hz, in ms2; LF/HF blank if HF = 0
+- VLF 0.003-0.04 Hz: separate full 1-hour pieces; shorter = blank
+Reference: HRV Task Force 1996.
+
+
+3. POINCARE (SD1, SD2)
+
+For each pair (x, next):
+- SD1 = SD of (next - x) / sqrt(2)
+- SD2 = SD of (next + x) / sqrt(2)
+At least 2 pairs. SD2/SD1 blank if SD1 = 0.
+
+
+4. ENTROPY (ApEn, SampEn)
+
+- pieces of 1000 consecutive beats (--hrv-entropy-beats, 1000-10000)
+- m = 2, r = 0.2 x SD, natural log
+- no gap bridging, no subsampling
+- SampEn with no matches = blank (with a reason)
+
+
+5. FROM PIECES TO ONE BLOCK VALUE
+
+- frequency and entropy: median of the pieces
+- LF/HF: median of the piece ratios
+- SD1/SD2: all accepted pairs of the block
+- every value has its count, status and review flag
+
+
+6. WHAT CHANGED FROM THE OLD CODE
+
+- old: all beats of 6 h joined          now: only continuous pieces
+- old: time made by adding intervals    now: real time stamps
+- old: 64-s Welch, from 50 s of data    now: full 5-min pieces; 1 h for VLF
+- old: rounded to 2 decimals            now: full precision
+- old: 300 points spread over 6 h       now: 1000 consecutive beats
+- old: ApEn formula wrong               now: corrected and tested
+- old: SD2 from all beats               now: from pairs
+
+Outputs: hrv_epochs.csv (each piece, with source rows and hashes),
+hrv_blocks.csv (one row per block), method.json (all settings).
+
+Evidence (local): reports/features/2026-10-05-garmin-hrv/report.md

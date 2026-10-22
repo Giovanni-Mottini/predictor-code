@@ -1,0 +1,161 @@
+PREDICTOR - CODE MAP
+
+Where each step lives in the code.
+Commands: CLI_GUIDE.txt.  Line numbers are from 22 Oct 2026.
+
+1. ONE XSENS RUN, FROM START TO END
+
+    xsens_code/__main__.py                 reads the command
+      pipeline.py: run_pipeline()
+        predictor_import/batch.py: run_batch()     inventory -> metadata -> conversion
+        xsens_cli.py: extract_subject()
+          shared_code/reader.py: SubjectReader     picks the recordings
+          xsens_features.py: extract_xsens()       features of one recording
+          xsens_dtw.py: pair_hand_dtw()            compares the two arms
+        xsens_cli.py: write_features()             tables and metadata
+        export.py: export_workbooks()              Excel, read back and checked
+
+- xsens-features starts at xsens_cli.run_xsens()
+- xsens-repetitions starts at repetitions.audit_subject()
+
+
+2. PREPARATION (predictor_import/)
+
+- batch.py: run_batch()          runs the whole preparation, resumable
+- inventory.py: scan()           finds the source files
+- inspection.py                  reads headers and clinical sheets
+- adapter.py                     builds patient metadata, resolves the arm sides
+- naming.py, policy.py           name rules; conflicts go to policy.json
+- storage_names.py, markers.py   folder names and markers
+- formatter.py                   converts Xsens and checks values are equal
+- garmin_formatter.py            converts Garmin tables
+- content_cache.py, layout.py    reuses verified work, renames old layouts
+- xsens_code/reader.py           checks hashes, columns and rows before reading
+
+
+3. ONE RECORDING -> 15 FEATURES (xsens_code/)
+
+Entry: xsens_features.py: extract_xsens(recording, config)
+XsensConfig = default settings.  FEATURE_NAMES, FEATURE_UNITS = output columns.
+
+Steps:
+1. processing_channels()        which inputs this side needs
+2. processing_span.py           may drop empty edges outside all repetitions;
+                                never fills gaps, never interpolates
+3. _extract_xsens()             ROM, speed, SPARC, trunk, elbow, hand paths
+4. extract_subject()            joins recordings, then fills DTW
+
+Markers: xsens.py (selected_boundaries, build_windows).
+Five markers -> four repetitions [start, end).
+
+Where each feature is calculated:
+- shoulder ROM (3)      rom.py: extract_rom()           from Joint Angles ZXY
+- angle unwrapping      rom.py: unwrap_angle()          before filtering
+- filter                rom.py: filter_angle()          shared low-pass
+- elbow ROM             elbow_rom.py                    from Segment Orientation - Quat
+- speeds (4)            xsens_features.py               from Segment Velocity
+- SPARC (4)             smoothness.py                   same velocity, own filter
+- trunk ranges (2)      xsens_features.py               from Ergonomic Joint Angles ZXY
+- hand DTW              xsens_dtw.py                    from Segment Position + T8
+
+Two paths for angles:
+
+    shoulder + trunk:  Euler angle -> unwrap -> filter -> max - min
+    elbow:             two quaternions -> angle between arm axes -> filter -> max - min
+
+The elbow never uses an Euler column.
+
+
+4. OUTPUTS
+
+- pipeline.py           whole run, folder checks, run.json
+- xsens_cli.py          tables, checks, short metadata
+- export.py             Excel: refuses to overwrite, reads back every cell
+- repetitions.py        repetition check and window export
+- shared_code/          safe writes, provenance hashes, progress
+
+
+5. TESTS
+
+- predictor_import/tests/             import, metadata, conversion
+- xsens_code/tests/test_rom.py        unwrapping and filters
+- test_elbow_rom.py                   quaternion elbow
+- test_processing_span.py             edge recovery
+- test_xsens_features.py              features and DTW
+- test_dtw_mirroring.py               DTW mirroring
+- test_pipeline.py                    raw to Excel, no overwrite
+- test_xsens_reader.py, shared_code/tests/    reading and outputs
+- garmin_code/tests/test_garmin.py            Garmin rules, MET, sleep
+- garmin_code/tests/test_garmin_hrv.py        notebook HRV vs the notebook code
+- garmin_code/tests/test_assessments.py       T windows, wear and day rules
+- garmin_code/tests/test_alignment.py         T0-T10 alignment
+- archive/xsens_code/src/                     old code used as reference
+
+Tests check the code, not clinical validity.
+
+
+6. GARMIN: FROM THE WATCH TO T1-T10
+
+    garmin_code/__main__.py  garmin-assessments
+      assessments.py: run_assessments()                      272
+        assessment_plan()    window = Xsens day +/- 2        120, 148
+          t1_window()        T1 from first wholly worn day   99
+        extract_assessment() read, check, 6-h blocks, wear   235
+          garmin_reader.py: read_period()                    100
+          garmin.py: GarminSubject.prepare()  rules          309
+          garmin.py: build_windows()          block values   766
+        summarize()          equal-day mean, >= 3 days       191
+        assessment_export.py: export_assessment()  Excel     67
+
+The data (Fitrockr exports of a Garmin vivoactive 5):
+- bbi-(raw).csv            one row per beat             -> RMSSD, SDNN, LF/HF, SD2/SD1, entropy
+- detailed-health-log.csv  every 5 min                  -> steps, MET, calories, wear, Fitrockr HRV
+- stress.csv               every minute                 -> stress
+- respiration.csv          every minute                 -> breaths/min
+- heart-rate.csv           every minute                 -> needed to accept a stress value
+- sleep.csv                per session                  -> sleep score, sleep hours
+- daily-health-log.csv     per day                      -> resting heart rate
+Enhanced BBI is never read (it adds invented beats in the gaps).
+
+What becomes blank (the source files are never edited), garmin.py:
+- not worn                               455
+- broken 5-min intervals                 470
+- day without resting energy: calories   519
+- record never arrived: calories, steps  524
+- MET = 0 (means "not computed")         533
+- MET recomputed where calories are ok   539
+- steps never recorded                   554
+- stress without heart rate, or > 100    585, 602
+- respiration with bad status            620, 625
+- resting HR <= 0, bad sleep sessions    677, 664
+
+Optional beat filters, OFF by default:
+- 230-1550 ms, worn, MET < 3             629
+- second wearer (more beats than time)   243, 693
+- > 20% from the local median            700
+
+Features, per 6-hour block:
+- RMSSD, SDNN       garmin_hrv_notebook.py: time_domain()     31
+- SD2/SD1           garmin_hrv_notebook.py: block()           114
+- LF/HF             garmin_hrv_notebook.py: frequency()       87
+- sample entropy    garmin_hrv_notebook.py: sample_entropy()  69
+- steps, MET, kcal, breaths, stress   mean of the block       garmin.py 789
+- resting HR        Garmin daily value                        garmin.py 893
+- sleep             merge < 2 h, longest per night            garmin.py 957
+- Fitrockr HRV      mean of Fitrockr 5-min values             garmin.py 565
+
+From blocks to one T value (assessments.py):
+- window     Xsens day +/- 2, or the given days      112, 51
+- valid      worn >= 50% of the 6 hours              212
+- T value    mean of valid days, >= 3 days           159
+- Excel      written, read back, checked             assessment_export.py 67
+
+Rules and open questions: docs/GARMIN_ASSESSMENTS.txt.
+These are watch estimates, not ECG, sleep lab or calorimetry.
+
+
+7. SHARED VS LOCAL
+
+In the repository: preparation, Xsens features, Garmin T1-T10, export.
+Local only: Garmin explorer, plausibility, Drive tools, old methods,
+report renderers, explorations/ (old research code, not needed).

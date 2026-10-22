@@ -1,0 +1,2 @@
+-r predictor_import/requirements.txt
+-r xsens_code/requirements.txt

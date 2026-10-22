@@ -1,0 +1,136 @@
+GARMIN FEATURES PER ASSESSMENT (T1-T10)
+
+Command: garmin-assessments.  One Excel per patient, one row per T1-T10.
+Each T = the X-marked Xsens assessment day, from 2 days before to 2 days after.
+T0 appears only in a separate comparison sheet.
+
+    predictor_import/.venv/bin/python -m garmin_code garmin-assessments \
+      standardized/PAZIENTI/SUBJECT_ID --output OUTPUT_GARMIN-new-run
+
+- several patients: list several folders
+- the output folder must be new
+- blocks are always 6 hours
+- only raw beats are read; Enhanced BBI never
+
+
+1. WHICH DAY IS EACH T
+
+- Only one dated X-marked Xsens day can anchor a T.
+- No date, or more than one: the T row stays, with blank values.
+- The code never guesses a nearby date.
+
+T1 starts later when the watch was paired late.
+The watch is handed over at T0 and paired days later,
+so the days before T1's Xsens day often have no data.
+- start    the later of: Xsens day - 2, or the first wholly worn day
+           (the day after the first worn interval; that day itself if it starts at 00:00)
+- length   up to 5 days
+- end      before T2's Xsens day (no worn day before it: T1 blank)
+Anchors sheet: window_basis = t1_first_worn_day, evidence in window_json.
+
+Exceptions go in an override file (--anchor-overrides overrides.json):
+
+    {"overrides": [{"participant_key": "PAZIENTI/SUBJECT_ID", "timepoint": "T1",
+                    "source_timepoint": "T0", "date": "2030-02-15",
+                    "reason": "why this mapping is allowed"}],
+     "windows":   [{"participant_key": "PAZIENTI/FG91", "timepoint": "T5",
+                    "start": "2030-03-02", "end": "2030-03-05",
+                    "reason": "why these days"}]}
+
+- overrides   the date must match an X-marked cell in the clinical file
+- windows     exact days (inclusive) instead of Xsens date +/- 2 or the T1 rule
+The clinical workbook is never changed. Reasons and hashes are saved.
+
+
+2. HOW A VALUE IS COMPUTED
+
+1. Each day is cut into night 00-06, morning 06-12, afternoon 12-18,
+   evening 18-24 (local time).
+2. A block-day counts only if the watch was worn >= 50% of it.
+3. Each block gets its value for that day.
+4. The T value = mean of the valid days, every day with the same weight.
+5. Fewer than 3 valid days = blank.
+
+Daily features (resting HR, sleep score, sleep hours) count once per day.
+Sleep: sessions less than 2 h apart are merged (mean score);
+the longest session per night is kept; hours include awake time.
+
+Features: RMSSD, SDNN, LF/HF, SD2/SD1, sample entropy, steps, MET,
+total calories, respiration, stress, resting HR, sleep score, sleep hours.
+Steps and calories are means per 5 minutes, not totals.
+
+
+3. ZEROS THAT MEAN "MISSING"
+
+Fitrockr writes 0 when it computed nothing. These become blank
+(the prepared tables are never edited):
+
+- MET = 0                       MET is always >= 1
+- MET in a 15-min quarter with missing calories
+- worn interval with 0 kcal     calories and steps never arrived
+- day where total = active kcal resting energy missing: total kcal blank
+- steps never above 0           steps blank
+
+MET = 0 is recomputed when the 15-min quarter has 3 intact intervals:
+MET = sum(total) / sum(total - active). This is the export's own formula:
+it reproduces every valid exported value.
+Calories are NOT rebuilt: the attempt missed by -5% to +13%.
+The high-calorie warning stays; the upper limit is still to decide.
+
+
+4. HRV
+
+Default: the first-wave notebook method (garmin_hrv_notebook.py).
+- all beats of the 6-hour block, in time order
+- RMSSD and SDNN from all beats
+- SD2/SD1 from SDNN and SDSD
+- LF/HF on a time axis made by adding up the intervals
+- sample entropy on 300 evenly spaced beats
+
+Beat filters: all OFF by default, waiting for the professor.
+- --bbi-screens               only 230-1550 ms, worn, MET < 3
+- --bbi-local-median-pct 20   drop beats > 20% from the median of 31 beats
+- --exclude-second-stream     drop 5-min bins with more beat time than clock
+                              time (a second wearer on the same account),
+                              plus one bin each side: beats, stress, minute HR
+The second wearer is detected and reported even when not excluded.
+
+Why Enhanced BBI is never used: it fills gaps with invented long beats.
+In one patient, morning RMSSD was 131 ms with it, 51 ms with raw beats.
+
+Alternative method: --hrv-method segments (see GARMIN_HRV.txt).
+Many cells are blank with it: raw beats rarely give full 5-min pieces.
+
+Summary_Fitrockr_HRV sheet: RMSSD, SDNN, LF/HF and SD2/SD1 are block means
+of Fitrockr's own 5-minute values. Fitrockr has no sample entropy.
+
+
+5. THE EXCEL SHEETS
+
+- Summary                one row per T1-T10, e.g. avg_morning_rmssd
+- Summary_Fitrockr_HRV   same rows, Fitrockr HRV
+- Blocks_20_per_T        5 days x 4 blocks per T, empty blocks included
+- Daily                  5 days per T, daily values once
+- Support                valid days and status per feature
+- T0_T1                  T0 vs T1 comparison
+- Anchors                which Xsens cells set each date
+- QC                     all checks (counts can overlap)
+- HRV_epochs             beat-level evidence
+- Definitions            units and rules
+
+Also saved: method.json (settings, code hashes) and metadata.json
+(source hashes, row counts, checks).
+
+Every workbook is reopened and compared cell by cell with what was computed.
+Existing folders are never overwritten.
+Plain Excel style: bold headers, no colours.
+This checks the code, not clinical meaning.
+
+Tests:
+
+    predictor_import/.venv/bin/python -m pytest garmin_code/tests -q
+
+Sources:
+- Fitrockr data dictionary   https://www.fitrockr.com/help-center/data-dictionary/
+- Fitrockr HRV               https://www.fitrockr.com/help-center/hrv/
+- Garmin Enhanced BBI        https://www8.garmin.com/garminhealth/news/Garmin-Enhanced-BBI_Final.pdf

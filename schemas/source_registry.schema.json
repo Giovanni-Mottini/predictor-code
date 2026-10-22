@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:predictor:source-registry:1",
+  "title": "PREDICTOR source content registry 1",
+  "type": "object",
+  "properties": {
+    "registry_version": {"const": 1},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "sources": {
+      "type": "object",
+      "patternProperties": {
+        "^src_[0-9a-f]{24}$": {"$ref": "#/$defs/source"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["registry_version", "updated_at", "sources"],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {
+      "type": "object",
+      "properties": {
+        "source_path": {"type": "string"},
+        "participant_key": {"type": "string"},
+        "modality": {"enum": ["xsens", "garmin"]},
+        "artifact_kind": {"enum": ["xsens_workbook", "garmin_archive", "garmin_table"]},
+        "sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "present": {"type": "boolean"},
+        "verified_this_run": {"type": "boolean"},
+        "seen_before": {"type": "boolean"},
+        "last_seen_at": {"type": "string", "format": "date-time"},
+        "content_verified_at": {"type": "string", "format": "date-time"},
+        "disposition": {"enum": ["mapped", "excluded", "deferred"]},
+        "last_content_state": {"enum": ["new", "unchanged", "modified", "unknown_previous_content"]},
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "observed_at": {"type": ["string", "null"], "format": "date-time"},
+              "evidence": {"enum": ["preexisting_manifest", "verified_formatter_source_sha256", "verified_drive_source_hash"]}
+            },
+            "required": ["sha256", "observed_at", "evidence"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["source_path", "participant_key", "modality", "artifact_kind", "sha256", "present", "verified_this_run", "versions"],
+      "additionalProperties": false
+    }
+  }
+}

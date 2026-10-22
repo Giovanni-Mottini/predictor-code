@@ -1,0 +1,279 @@
+PREDICTOR - COMMAND GUIDE
+
+Examples use a made-up patient (FG91) and made-up dates: change them.
+
+1. BEFORE ANY COMMAND
+
+- Run every command from this folder.
+- Paths with spaces go in "double quotes".
+- Always write the group: PAZIENTI/FG91, SANI/SANO_BA001, ...
+- Use a NEW output folder for every run (run-01, run-02, ...).
+- Keep results outside "Dati PREDICTOR/" and standardized/.
+
+Progress is printed while the command runs. To hide it: --no-progress.
+To save it in a file, add at the end:  2>&1 | tee execution.log
+
+
+2. WHAT DO I WANT TO DO?
+
+- prepare data already on this computer   -> section 3
+- calculate Xsens movement features       -> section 4
+- calculate Garmin features T1-T10        -> section 5
+- Garmin for chosen dates                 -> section 6
+- read the results                        -> section 8
+- something went wrong                    -> section 9
+
+If the patient is already in standardized/, skip section 3.
+If the original files changed, run section 3 again.
+
+
+3. PREPARE THE DATA
+
+Reads "Dati PREDICTOR/", writes prepared copies in standardized/.
+It does not calculate features.
+
+    predictor_import/.venv/bin/python -m predictor_import standardize \
+      "Dati PREDICTOR" --subject PAZIENTI/FG91 \
+      --output standardized --reports reports/standardization/fg91-run-01
+
+Options:
+- --modality xsens       only Xsens (default: Xsens and Garmin)
+- --modality garmin      only Garmin
+- --subject GROUP/ID     another patient (repeat it). None = all patients
+- --max-records 10       small run; run again to continue
+- --plan-only            only show the plan, change nothing
+- --min-free-gib 2       free disk space to keep (default 2)
+
+You can safely run it again: finished and unchanged work is reused.
+
+
+4. XSENS FEATURES
+
+All 15 features, FG91 visit T1:
+
+    predictor_import/.venv/bin/python -m xsens_code xsens-features \
+      standardized/PAZIENTI/FG91 --session T1 \
+      --output reports/features/fg91-xsens-t1-run-01
+
+Then open features.csv in the output folder.
+
+Options:
+- --session T1           visit; repeat for more. None = all visits
+- --timepoint T1         clinical timepoint (can differ from session)
+- --task 4               task 1, 2, 3 or 4; repeat. None = tasks 1-4
+- --limb-condition X     paretic, non_paretic or simulated
+- --anatomical-side X    left or right
+- --cutoff-hz 6          signal filter (default 6 Hz)
+- --sparc-cutoff-hz 15   smoothness filter (default 15 Hz)
+- more patients          list more folders after the first one
+
+Notes:
+- The hand comparison (DTW) needs BOTH arms in the selection.
+  Leave the side filters off, or that value stays blank.
+- DTW also needs the T8 orientation data; without it only DTW is blank.
+- Out of scope: B&B, single exported repetitions, MOTORE.
+
+Check repetitions only (no features):
+
+    predictor_import/.venv/bin/python -m xsens_code xsens-repetitions \
+      standardized/PAZIENTI/FG91 --session T1 \
+      --output reports/features/fg91-repetition-check-01
+
+Raw files to Excel in one step: see "xsens_code pipeline" in README.txt.
+Pipeline options: --subject (repeat), --standardized, --output,
+--work-directory, --session, --timepoint, --task, cutoffs.
+
+
+5. GARMIN FEATURES T1-T10 (main Garmin command)
+
+For each patient and each T1-T10: mean over the Xsens assessment day
++/- 2 days, in four 6-hour blocks (night, morning, afternoon, evening).
+
+    predictor_import/.venv/bin/python -m garmin_code garmin-assessments \
+      standardized/PAZIENTI/FG91 standardized/PAZIENTI/FG92 standardized/PAZIENTI/FG93 \
+      --anchor-overrides reports/garmin-overrides.json \
+      --output OUTPUT_GARMIN_new-run/unfiltered
+
+This uses every raw beat. For the filtered version, add:
+
+      --bbi-screens --exclude-second-stream --bbi-local-median-pct 20
+
+Each patient gets Garmin_features.xlsx:
+- Summary                one row per T
+- Summary_Fitrockr_HRV   same, with Fitrockr's own HRV
+- other sheets           per block, per day, counts, checks, definitions
+
+The output folder must not exist yet.
+The override file is optional:
+
+    {"overrides": [{"participant_key": "PAZIENTI/FG92", "timepoint": "T1",
+                    "source_timepoint": "T0", "date": "2030-02-15", "reason": "why"}],
+     "windows":   [{"participant_key": "PAZIENTI/FG91", "timepoint": "T5",
+                    "start": "2030-03-02", "end": "2030-03-05", "reason": "why"}]}
+
+- overrides   use another X-marked Xsens date for that T
+- windows     use these exact days (inclusive) instead of date +/- 2
+T1 starts on the first wholly worn day when the watch was paired late
+(see docs/GARMIN_ASSESSMENTS.txt); no window entry is needed for that.
+
+Rules: docs/GARMIN_ASSESSMENTS.txt.  Features in the code: CODE_MAP.txt.
+
+
+6. GARMIN FOR CHOSEN DATES
+
+FG91 on 8 and 9 April 2030 (start included, END EXCLUDED):
+
+    predictor_import/.venv/bin/python -m garmin_code garmin-windows \
+      standardized/PAZIENTI/FG91 --start 2030-04-08 --end-exclusive 2030-04-10 \
+      --output reports/features/fg91-garmin-april-08-09-run-01
+
+Open 30min_wearable.csv: one row every 30 minutes.
+- steps and calories are MEANS per row: adding rows is not a daily total
+- HRV repeats over its 6-hour block; sleep and resting HR over the day
+- blank = missing or excluded: read qc_flags.csv
+
+Different dates per patient: write reports/garmin-ranges.json
+
+    {
+      "PAZIENTI/FG91":   {"start": "2030-04-08", "end_exclusive": "2030-04-10"},
+      "SANI/SANO_BA001": {"start": "2030-05-01", "end_exclusive": "2030-05-03"}
+    }
+
+and run with --ranges reports/garmin-ranges.json instead of --start/--end-exclusive.
+The file must list exactly the patients in the command.
+
+Garmin options (garmin-windows, garmin-assessments, garmin-clinical):
+- --window-minutes 30            row size; must divide 360 (assessments: always 360)
+- --calorie-rate 25              high-calorie warning, kcal/min
+- --max-selected-rows 2000000    row limit
+- --hrv-method notebook          default: first-wave method, one value per block
+- --hrv-method segments          alternative: gap-free 5-minute epochs
+- --bbi-screens                  only beats 230-1550 ms, worn, MET < 3
+- --exclude-second-stream        drop beats, stress and HR of a second wearer
+- --bbi-local-median-pct 20      drop beats > 20% from the local median
+- --max-pair-gap-seconds 5       segments only
+- --hrv-entropy-beats 1000       segments only
+- --hrv-clock-tolerance-ms 50    segments only
+All beat filters are OFF by default.
+
+
+7. GARMIN ON CLINICAL DAYS (T0-T10)
+
+Uses the clinical dates already imported:
+
+    predictor_import/.venv/bin/python -m garmin_code garmin-clinical \
+      standardized/PAZIENTI/FG91 --output reports/features/fg91-garmin-alignment-run-01
+
+- T0 and T5-T10: their assessment day
+- T1-T4: their days D1-D5 together
+- --max-clinical-days 64   batch limit (default 64)
+Open aligned/timepoint_features.csv and aligned/timepoints.csv.
+
+Own monitoring periods: garmin-period-template, then garmin-align.
+See docs/GARMIN_ALIGNMENT.txt.
+
+
+8. READ THE RESULTS
+
+- report.md                 summary to read first (where produced)
+- features.csv              Xsens features
+- repetitions.csv           Xsens repetition limits and durations
+- 30min_wearable*.csv       Garmin rows (also _day, _night, _normalized)
+- hrv_blocks.csv            Garmin HRV per block (hrv_epochs.csv: shorter pieces)
+- qc_flags.csv              checks, and why values are blank or provisional
+- coverage.csv, results.csv preparation coverage and outcome per source
+- *.json                    settings and details for technical review
+- *.parquet                 copies for the code; open the CSVs instead
+
+Garmin file names start with the row size: 60min_... with --window-minutes 60.
+All results are provisional research outputs.
+
+
+9. COMMON PROBLEMS
+
+- No such file or directory    you are not in the project folder (section 1)
+- No module named ...          use the project Python; install (section 10)
+- path with spaces fails       put it in "double quotes"
+- empty Xsens selection        check patient and visit names; remove filters
+- missing manifest             prepare the patient first (section 3)
+- dates_required               give --start and --end-exclusive, or --ranges
+- conflicting_dates            use --ranges OR the two dates, not both
+- range_identity_mismatch      ranges file must list exactly those patients
+- feature_schema_mismatch      run those Garmin patients separately
+- blank hand comparison        include both arms
+- checksum / source changed    prepare again; never edit prepared tables by hand
+- not enough disk space        free space (preparation keeps 2 GiB free)
+
+Stop a running command: Ctrl+C.
+Preparation can be rerun; features go into a new folder.
+
+Exit codes:
+- 0   finished; still read the report
+- 1   partial, or something to review; files may be written
+- 2   wrong arguments or input problem; read the error
+
+Help for any command:
+
+    predictor_import/.venv/bin/python -m xsens_code --help
+    predictor_import/.venv/bin/python -m xsens_code xsens-features --help
+
+
+10. FIRST-TIME SETUP
+
+    python3 -m venv predictor_import/.venv
+    predictor_import/.venv/bin/python -m pip install -r requirements-dev.txt
+
+Tests:
+
+    predictor_import/.venv/bin/python -m pytest -q
+
+
+11. MAINTAINER COMMANDS (predictor_import)
+
+List the original files:
+
+    predictor_import/.venv/bin/python -m predictor_import inventory \
+      "Dati PREDICTOR" --output reports/inventory/run-01
+
+Plan metadata (usually done by standardize):
+
+    predictor_import/.venv/bin/python -m predictor_import adapt \
+      reports/inventory/run-01/inventory.json \
+      --subject PAZIENTI/FG91 --output reports/adapter/run-01
+
+- --write          write subject.json and manifest.json (--output standardized)
+- --hash-sources   checksum the originals; needs --write
+
+Convert one patient (usually done by standardize):
+
+    predictor_import/.venv/bin/python -m predictor_import format-xsens standardized/PAZIENTI/FG91
+    predictor_import/.venv/bin/python -m predictor_import format-garmin standardized/PAZIENTI/FG91
+
+- --source-id ID       only this source; repeat
+- --limit N            at most N sources
+- --table NAME.csv     Garmin only: only this table; repeat
+
+Rename old prepared folders (contents unchanged):
+
+    predictor_import/.venv/bin/python -m predictor_import migrate-xsens-layout \
+      standardized --dry-run --report reports/xsens-layout-preview.json
+
+Remove --dry-run to apply. Garmin: migrate-garmin-layout.
+
+
+12. LOCAL TOOLS (not in the shared repository)
+
+These run only on a computer that has the local files.
+
+- Drive update       predictor_import refresh-drive predictor: --output standardized
+                     --reports <folder> [--dry-run] [--local-source "Dati PREDICTOR"]
+                     needs rclone with a remote called predictor:
+- raw Drive copy     scripts/update_predictor_copy.py --background
+- plausibility       python -m shared_code.screen_plausibility <patients>
+                     --output <new folder> [--modality xsens|garmin|both] [--ranges FILE]
+- benchmark          python -m predictor_import.benchmark <patient> --output <folder>
+- Garmin explorer    garmin_code/scripts/explore_user_garmin.py "<original CSV folder>"
+- release            python -m shared_code.release prepare standardized --output <folder>
+                     then: python -m shared_code.release start <folder>
+
+Details: the local docs in docs/ (DRIVE_REFRESH, PLAUSIBILITY_SCREENING, ...).

@@ -1,0 +1,448 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:predictor:manifest:0.2.0",
+  "title": "PREDICTOR manifest 0.2.0",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "participant_key": {
+      "type": "string"
+    },
+    "source_root": {
+      "type": "string"
+    },
+    "inventory_started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "inventory_finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "adapter_stage": {
+      "enum": [
+        "metadata_only",
+        "metadata_and_tables"
+      ]
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    },
+    "import_policy": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "participant_key",
+    "source_root",
+    "inventory_started_at",
+    "inventory_finished_at",
+    "adapter_stage",
+    "records",
+    "import_policy"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "record": {
+      "type": "object",
+      "properties": {
+        "recording_id": {
+          "type": "string",
+          "pattern": "^rec_[0-9a-f]{24}$"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^src_[0-9a-f]{24}$"
+        },
+        "source_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mtime_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modality": {
+          "enum": [
+            "xsens",
+            "garmin",
+            "motore",
+            "clinical",
+            "unknown"
+          ]
+        },
+        "artifact_kind": {
+          "type": "string"
+        },
+        "disposition": {
+          "enum": [
+            "mapped",
+            "needs_review",
+            "deferred",
+            "preserve_only",
+            "excluded"
+          ]
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "activity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timepoint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^T\\d+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timepoint_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "protocol_timepoint",
+                "source_label",
+                "session_label"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocol_day": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "acquisition_date": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "anatomical_side": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "right"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "side_evidence": {
+          "anyOf": [
+            {
+              "enum": [
+                "source_filename",
+                "clinical_workbook_and_contralateral_rule"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limb_condition": {
+          "anyOf": [
+            {
+              "enum": [
+                "non_paretic",
+                "paretic",
+                "simulated"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "original_limb_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repetition": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "representation": {
+          "anyOf": [
+            {
+              "enum": [
+                "full_recording",
+                "individual_repetition"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sheets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "archive_members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "compressed_bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "crc32": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}$"
+              },
+              "safe_path": {
+                "type": "boolean"
+              },
+              "unique_path": {
+                "type": "boolean"
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "inspection_status": {
+                "enum": [
+                  "listed",
+                  "header_readable",
+                  "inspection_error"
+                ]
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "size_bytes",
+              "compressed_bytes",
+              "crc32",
+              "safe_path",
+              "unique_path",
+              "columns",
+              "inspection_status"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "normalized_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "formatter_status": {
+          "enum": [
+            "not_converted",
+            "converted",
+            "failed"
+          ]
+        },
+        "ready_for_features": {
+          "const": false
+        },
+        "selection_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selection_assumption": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duplicate_of_source_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selected_archive_members": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected_repetitions": {
+          "enum": [
+            4,
+            null
+          ]
+        },
+        "expected_marker_count": {
+          "enum": [
+            5,
+            null
+          ]
+        },
+        "simulation_types_by_repetition": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "formatter_report": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "recording_id",
+        "source_id",
+        "source_path",
+        "size_bytes",
+        "mtime_ns",
+        "sha256",
+        "modality",
+        "artifact_kind",
+        "disposition",
+        "issues",
+        "activity",
+        "task",
+        "timepoint",
+        "timepoint_kind",
+        "protocol_day",
+        "session_id",
+        "acquisition_date",
+        "anatomical_side",
+        "side_evidence",
+        "limb_condition",
+        "original_limb_code",
+        "repetition",
+        "representation",
+        "sheets",
+        "columns",
+        "archive_members",
+        "normalized_target",
+        "formatter_status",
+        "ready_for_features",
+        "selection_reason",
+        "selection_assumption",
+        "duplicate_of_source_id",
+        "selected_archive_members",
+        "expected_repetitions",
+        "expected_marker_count",
+        "simulation_types_by_repetition",
+        "formatter_report"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

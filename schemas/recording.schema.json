@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:predictor:recording:0.2.0",
+  "title": "PREDICTOR Xsens recording 0.2.0",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "formatter_version": {
+      "const": "xsens-parquet-0.2.1"
+    },
+    "import_policy_id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string",
+      "pattern": "^src_[0-9a-f]{24}$"
+    },
+    "source_path": {
+      "type": "string"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source_mtime_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "compression": {
+      "const": "zstd"
+    },
+    "tables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_sheet": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "format": {
+            "enum": [
+              "parquet",
+              "json"
+            ]
+          },
+          "row_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "roundtrip_verified": {
+            "const": true
+          }
+        },
+        "required": [
+          "source_sheet",
+          "file",
+          "format",
+          "row_count",
+          "sha256",
+          "roundtrip_verified"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "format": {
+                  "const": "parquet"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "dtype": {
+                        "type": "string"
+                      },
+                      "unit": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "null_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "dtype",
+                      "unit",
+                      "null_count"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "values_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "first_frame": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "last_frame": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "header_row": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "columns",
+                "values_sha256",
+                "first_frame",
+                "last_frame",
+                "header_row",
+                "frame_values_sha256",
+                "marker_frames"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "recorded_at_utc": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "sampling_rate_hz": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "unit_policy": {
+      "const": "unknown_unless_declared_by_source"
+    },
+    "expected_repetitions": {
+      "enum": [
+        4,
+        null
+      ]
+    },
+    "expected_marker_count": {
+      "enum": [
+        5,
+        null
+      ]
+    },
+    "observed_marker_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "marker_selection": {
+      "description": "Derived boundaries, separate from original marker rows; optional for older descriptors.",
+      "type": "object",
+      "properties": {
+        "policy_id": {"type": "string"},
+        "rule_applied": {"type": "boolean"},
+        "temporary": {"type": "boolean"},
+        "source_marker_count": {"type": "integer", "minimum": 0},
+        "effective_marker_count": {"type": "integer", "minimum": 0},
+        "boundary_frames": {"type": "array", "items": {"type": ["integer", "null"]}},
+        "ignored_marker_indices": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "ignored_marker_frames": {"type": "array", "items": {"type": ["integer", "null"]}},
+        "valid_for_expected_repetitions": {"type": "boolean"}
+      },
+      "required": ["policy_id", "rule_applied", "temporary", "source_marker_count", "effective_marker_count", "boundary_frames", "ignored_marker_indices", "ignored_marker_frames", "valid_for_expected_repetitions"],
+      "additionalProperties": false
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "all_values_roundtrip_verified": {
+      "const": true
+    },
+    "ready_for_features": {
+      "const": false
+    },
+    "output_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "conversion_seconds": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "formatter_version",
+    "import_policy_id",
+    "source_id",
+    "source_path",
+    "source_sha256",
+    "source_size_bytes",
+    "source_mtime_ns",
+    "created_at",
+    "compression",
+    "tables",
+    "recorded_at_utc",
+    "sampling_rate_hz",
+    "unit_policy",
+    "expected_repetitions",
+    "expected_marker_count",
+    "observed_marker_count",
+    "warnings",
+    "all_values_roundtrip_verified",
+    "ready_for_features",
+    "output_size_bytes",
+    "conversion_seconds"
+  ],
+  "additionalProperties": false
+}

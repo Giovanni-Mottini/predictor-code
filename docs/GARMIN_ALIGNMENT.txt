@@ -1,0 +1,102 @@
+GARMIN ON CLINICAL DAYS (T0-T10)
+
+Code: garmin_code/alignment.py.
+Default rule: use the exact clinical day recorded for each timepoint.
+Missing data, coverage and counts stay visible.
+It never guesses the full monitoring period from visit dates.
+
+
+1. RUN IT
+
+    predictor_import/.venv/bin/python -m garmin_code garmin-clinical \
+      standardized/PAZIENTI/FG91 --output reports/features/my-fg91-garmin-alignment
+
+- needs imported clinical dates (T0-T10) and converted Garmin data
+- --max-clinical-days 64   batch limit (default 64)
+- reads one day at a time, so long gaps cost no memory
+- same Garmin options as garmin-windows
+
+Which days:
+- T0 and T5-T10   their assessment day
+- T1-T4           their real days D1-D5 together (gaps add nothing)
+- missing date    listed in clinical_alignment_plan.csv
+- day with no data   blank values, never replaced by a nearby day
+
+Only for PAZIENTI. Healthy and control subjects need their own periods.
+
+
+2. OUTPUT FILES (in aligned/)
+
+- timepoint_features.csv   one row per timepoint and feature
+- timepoints.csv           coverage and wear per timepoint
+- period_features.csv, periods.csv   the same per single period or day
+- aligned_windows.csv      original window values with their labels
+- aligned_daily.csv        sleep and resting HR, once per day
+- aligned_hrv_blocks.csv   6-hour HRV blocks, once each
+- xsens_links.csv, xsens_timepoint_links.csv   links to Xsens recordings
+- report.json, period_definitions.json         settings and checks
+Start from report.md.
+
+
+3. HOW VALUES ARE COMBINED
+
+- health, stress, respiration: mean weighted by the number of measurements
+    period mean = sum(window mean x count) / sum(count)
+- steps and calories: means, not totals
+- sleep and resting HR: mean of daily values, once per day
+- HRV: median of the 6-hour blocks
+  (a median of SDNN values is NOT the SDNN of the whole period)
+- a window under review is left out of the summary, but kept in aligned_windows
+- nothing is divided, clipped or filled in
+
+Coverage = valid measured seconds / seconds of the included days.
+No minimum coverage is imposed.
+
+
+4. YOUR OWN MONITORING PERIODS
+
+Step 1. Make a template (dates left empty):
+
+    predictor_import/.venv/bin/python -m garmin_code garmin-period-template \
+      standardized/PAZIENTI/FG91 --output reports/fg91-monitoring-periods.json
+
+Step 2. Fill start, end_exclusive and definition_source for each period.
+Delete the periods you don't need. Example:
+
+    {"format_version": 1, "time_basis": "source_local_wall_clock",
+     "participants": {"PAZIENTI/FG91": [{
+        "period_id": "T5", "timepoint": "T5", "protocol_day": null,
+        "start": "2029-12-19", "end_exclusive": "2029-12-20",
+        "definition_source": "Exact imported clinical day"}]}}
+
+Step 3. Align existing garmin-windows outputs:
+
+    predictor_import/.venv/bin/python -m garmin_code garmin-align \
+      standardized/PAZIENTI/FG91 \
+      --windows reports/features/my-fg91-garmin-windows \
+      --periods reports/fg91-monitoring-periods.json \
+      --output reports/features/my-fg91-period-summary
+
+- several --windows folders are allowed if their settings match
+- overlapping inputs or periods are refused, never counted twice
+- old inputs must be regenerated
+
+Exit codes: 0 done, 1 written but something missing or to review,
+2 input problem.
+
+
+5. WHAT THE OLD CODE DID
+
+The old MOOD workflow never mapped data to T0-T10:
+- data_quality_v2.ipynb (cell 32): first EMA day - 7 to + 6 = 14 days
+- filters.py: filter_by_quality_report() applies that range
+- wearable_matrix_aggregation_parametric.ipynb (cells 3-4): 7 days
+  from the first EMA day
+- Protocollo sani.pdf (page 1): watch 1 week before, back 2 weeks after.
+  That is for healthy subjects, not a patient rule.
+
+The new code keeps explicit dates per patient and whole days,
+and uses the real clinical days instead of the EMA date.
+The old notebooks were read, not run.
+
+Evidence (local): reports/features/2026-10-05-garmin-alignment/report.md

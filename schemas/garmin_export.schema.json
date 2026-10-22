@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:predictor:garmin-export:0.2.0",
+  "title": "PREDICTOR Garmin export 0.2.0",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "formatter_version": {
+      "const": "garmin-parquet-0.2.0"
+    },
+    "import_policy_id": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string",
+      "pattern": "^src_[0-9a-f]{24}$"
+    },
+    "source_path": {
+      "type": "string"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source_mtime_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "compression": {
+      "const": "zstd"
+    },
+    "tables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_table": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "format": {
+            "const": "parquet"
+          },
+          "row_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "columns": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "source_header": {
+                  "type": "string"
+                },
+                "source_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "dtype": {
+                  "enum": [
+                    "int64",
+                    "float64",
+                    "string"
+                  ]
+                },
+                "unit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "null_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "type_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "nonfinite_token_count": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "name",
+                "source_header",
+                "source_index",
+                "dtype",
+                "unit",
+                "null_count",
+                "type_reason",
+                "nonfinite_token_count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "source_headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "csv_delimiter": {
+            "enum": [
+              ",",
+              ";",
+              "\t"
+            ]
+          },
+          "null_policy": {
+            "const": "empty_csv_field_only"
+          },
+          "source_cells_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "values_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "roundtrip_verified": {
+            "const": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "conversion_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "source_csv_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "source_table",
+          "file",
+          "format",
+          "row_count",
+          "columns",
+          "source_headers",
+          "csv_delimiter",
+          "null_policy",
+          "source_cells_sha256",
+          "values_sha256",
+          "sha256",
+          "roundtrip_verified",
+          "warnings",
+          "conversion_seconds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "selected_source_tables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "complete_selected_tables": {
+      "type": "boolean"
+    },
+    "timestamp_policy": {
+      "const": "preserve_source_columns_without_timezone_conversion"
+    },
+    "numeric_policy": {
+      "const": "int64_or_float64_with_decimal_text_roundtrip_guard_otherwise_string"
+    },
+    "crc_policy": {
+      "enum": [
+        "converted_archive_members_read_to_eof",
+        "not_applicable"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "all_values_roundtrip_verified": {
+      "const": true
+    },
+    "ready_for_features": {
+      "const": false
+    },
+    "output_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "conversion_seconds": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "formatter_version",
+    "import_policy_id",
+    "source_id",
+    "source_path",
+    "source_sha256",
+    "source_size_bytes",
+    "source_mtime_ns",
+    "created_at",
+    "compression",
+    "tables",
+    "selected_source_tables",
+    "complete_selected_tables",
+    "timestamp_policy",
+    "numeric_policy",
+    "crc_policy",
+    "warnings",
+    "all_values_roundtrip_verified",
+    "ready_for_features",
+    "output_size_bytes",
+    "conversion_seconds"
+  ],
+  "additionalProperties": false
+}
