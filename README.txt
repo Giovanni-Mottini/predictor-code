@@ -16,6 +16,7 @@ Patient data and results are never in Git.
 - CLI_GUIDE.txt       every command, step by step
 - CODE_MAP.txt        where each step and feature lives in the code
 - docs/GARMIN_*.txt   Garmin rules (assessments, HRV, alignment)
+- ELBOW_ROM_OLD_TO_NEW.txt   old -> new code lines for unwrapping and quaternion elbow
 - <folder>/README.txt one short file per code folder
 
 

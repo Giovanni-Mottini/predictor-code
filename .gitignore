@@ -129,5 +129,6 @@ venv
 !/docs/GARMIN_ASSESSMENTS.txt
 !/docs/GARMIN_HRV.txt
 !/docs/GARMIN_ALIGNMENT.txt
+!/ELBOW_ROM_OLD_TO_NEW.txt
 
 /predictor_import/report.py
