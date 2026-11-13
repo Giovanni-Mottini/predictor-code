@@ -1,0 +1,4 @@
+# Pinned to the versions that produced the paper's correlation table (13 Nov 2026).
+# correlation_code reads the feature tables through feature_importance_code.
+-r ../feature_importance_code/requirements.txt
+openpyxl==3.1.5

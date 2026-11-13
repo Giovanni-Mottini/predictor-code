@@ -1,8 +1,13 @@
 XSENS_CODE - MOVEMENT FEATURES
 
 Commands:
-- pipeline            raw files -> prepared data -> 15 features -> checked Excel
-- xsens-features      15 features from data already prepared
+- pipeline            raw files -> prepared data -> features -> checked outputs
+                      (task workbooks, paretic averages, B&B and Motore CSVs),
+                      twice: OUTPUT with speeds in m/s, OUTPUT_SPEED_LENGTH
+                      with speeds divided by their lever length
+- xsens-features      features from data already prepared
+  tasks 1-4: 15 features per repetition (five markers)
+  B&B, mot1, mot2: 15 features per whole recording (no marker check)
 - xsens-repetitions   check the repetition windows only
 
 Elbow: rom_elbow_bending, from quaternions (elbow_rom.py), unsigned.

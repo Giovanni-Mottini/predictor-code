@@ -10,7 +10,7 @@ import openpyxl
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, filtfilt, sosfiltfilt
 
 from predictor_import.adapter import atomic_json, make_plan, write_plan
 from predictor_import.formatter import format_subject
@@ -23,71 +23,83 @@ from xsens_code.smoothness import spectral_arc_length
 from xsens_code.xsens_cli import extract_subject
 from xsens_code.xsens_dtw import (DTW_COORDINATE_METHOD, ORIENTATION_SHEET, align_and_mirror,
                                  center_trajectory, hand_distance, initial_heading_frame, pair_hand_dtw)
+from xsens_code.xsens import ACTIVITIES, WHOLE_RECORDING_POLICY_ID
 from xsens_code.xsens_features import COMP_COLUMNS, FEATURE_NAMES, SEGMENTS, XsensConfig, extract_xsens
 from xsens_code.tests.test_xsens_reader import opened, replace_column, rewrite_table
+
+
+TASK_MARKERS = (1010, 1060, 1110, 1160, 1210)
+
+
+def synthetic_recording(source: Path, file_side: str, markers=TASK_MARKERS) -> None:
+    """Write one synthetic 240-frame Xsens workbook (frames 1000-1239, 60 Hz)."""
+    source.parent.mkdir(parents=True, exist_ok=True)
+    book = openpyxl.Workbook()
+    book.remove(book.active)
+    t = np.arange(240) / 60
+    variation = 1 if file_side == "dx" else 1.2
+    for name in (*XSENS_SHEETS, ORIENTATION_SHEET):
+        sheet = book.create_sheet(name)
+        if name == "General Information":
+            sheet.append(["Frame Rate", 60])
+            continue
+        if name == "Markers":
+            sheet.append(["Frame", "Marker Text"])
+            for i, frame in enumerate(markers):
+                sheet.append([frame, f"event{i}"])
+            continue
+        if name == ORIENTATION_SHEET:
+            columns = [f"T8 q{i}" for i in range(4)]
+            values = [np.ones_like(t), np.zeros_like(t), np.zeros_like(t), np.zeros_like(t)]
+            bend = np.deg2rad(40 + 20 * np.sin(2 * np.pi * .7 * t))
+            for side in ("Right", "Left"):
+                for segment in ("Upper Arm", "Forearm"):
+                    columns += [f"{side} {segment} q{i}" for i in range(4)]
+                    values += ([np.ones_like(t), np.zeros_like(t), np.zeros_like(t), np.zeros_like(t)]
+                        if segment == "Upper Arm" else [np.cos(bend/2), np.zeros_like(t), np.zeros_like(t), np.sin(bend/2)])
+        elif name == "Joint Angles ZXY":
+            columns = [f"{side} {suffix}" for side in ("Right", "Left") for suffix in [*ROM_COLUMNS.values(), "Elbow Flexion/Extension"]]
+            values = [30 + (10 + j) * np.sin(2 * np.pi * 0.7 * t) + 2 * np.sin(2 * np.pi * 12 * t) for j in range(len(columns))]
+            columns += [f"{side} Elbow Ulnar Deviation/Radial Deviation" for side in ("Right", "Left")]
+            values += [np.zeros_like(t), np.zeros_like(t)]
+        elif name == "Segment Velocity":
+            bases = ["T8", *[f"{side} {segment}" for side in ("Right", "Left") for segment in list(SEGMENTS.values())[1:]]]
+            columns = [f"{base} {axis}" for base in bases for axis in "xyz"]
+            values = [variation * (0.2 + (j + 1) / 100 + 0.06 * np.sin(2 * np.pi * (0.7 + j / 20) * t)
+                                  + 0.08 * np.sin(2 * np.pi * 17 * t)) for j in range(len(columns))]
+        elif name == "Segment Position":
+            columns = [f"{side} Hand {axis}" for side in ("Right", "Left") for axis in "xyz"]
+            values = [variation * 0.1 * np.sin(2 * np.pi * (0.4 + j / 10) * t) + j / 3 for j in range(len(columns))]
+            bend = np.deg2rad(40 + 20 * np.sin(2 * np.pi * .7 * t))
+            for side, direction, offset in (("Right", -1, 0), ("Left", 1, 3)):
+                hand = np.column_stack(values[offset:offset+3])
+                upper_axis = np.column_stack([np.zeros_like(t), np.ones_like(t), np.zeros_like(t)])
+                forearm_axis = np.column_stack([-np.sin(bend), np.cos(bend), np.zeros_like(t)])
+                forearm = hand - direction * forearm_axis * .3
+                upper = forearm - direction * upper_axis * .3
+                shoulder = upper + np.column_stack([np.zeros_like(t), direction * .15 + 0 * t, .02 * np.sin(2 * np.pi * .5 * t)])
+                for segment, points in (("Upper Arm", upper), ("Forearm", forearm), ("Shoulder", shoulder)):
+                    columns += [f"{side} {segment} {axis}" for axis in "xyz"]
+                    values += [points[:,j] for j in range(3)]
+            # Pelvis fixed; T8 bends a little, so pelvis-to-T8 (the trunk lever) changes frame by frame.
+            columns += [f"{segment} {axis}" for segment in ("Pelvis", "T8") for axis in "xyz"]
+            values += [0 * t, 0 * t, -.5 + 0 * t, .03 * np.sin(2 * np.pi * .3 * t), 0 * t, -.1 + .01 * np.cos(2 * np.pi * .3 * t)]
+        elif name == "Ergonomic Joint Angles ZXY":
+            columns = list(COMP_COLUMNS.values())
+            values = [3 + 5 * np.sin(2 * np.pi * 0.6 * t), 5 + 10 * np.sin(2 * np.pi * 0.7 * t)]
+        else:
+            columns, values = ["unused"], [t]
+        sheet.append(["Frame", *columns])
+        for i in range(240):
+            sheet.append([1000 + i, *[float(v[i]) for v in values]])
+    book.save(source)
 
 
 @pytest.fixture
 def full_subject(tmp_path):
     raw = tmp_path / "raw"
     for file_side in ("dx", "sx"):
-        source = raw / f"SANI/SANO_FG91/XSens/FG91_t1_task1_{file_side}.xlsx"
-        source.parent.mkdir(parents=True, exist_ok=True)
-        book = openpyxl.Workbook()
-        book.remove(book.active)
-        t = np.arange(240) / 60
-        variation = 1 if file_side == "dx" else 1.2
-        for name in (*XSENS_SHEETS, ORIENTATION_SHEET):
-            sheet = book.create_sheet(name)
-            if name == "General Information":
-                sheet.append(["Frame Rate", 60])
-                continue
-            if name == "Markers":
-                sheet.append(["Frame", "Marker Text"])
-                for i, frame in enumerate([1010, 1060, 1110, 1160, 1210]):
-                    sheet.append([frame, f"event{i}"])
-                continue
-            if name == ORIENTATION_SHEET:
-                columns = [f"T8 q{i}" for i in range(4)]
-                values = [np.ones_like(t), np.zeros_like(t), np.zeros_like(t), np.zeros_like(t)]
-                bend = np.deg2rad(40 + 20 * np.sin(2 * np.pi * .7 * t))
-                for side in ("Right", "Left"):
-                    for segment in ("Upper Arm", "Forearm"):
-                        columns += [f"{side} {segment} q{i}" for i in range(4)]
-                        values += ([np.ones_like(t), np.zeros_like(t), np.zeros_like(t), np.zeros_like(t)]
-                            if segment == "Upper Arm" else [np.cos(bend/2), np.zeros_like(t), np.zeros_like(t), np.sin(bend/2)])
-            elif name == "Joint Angles ZXY":
-                columns = [f"{side} {suffix}" for side in ("Right", "Left") for suffix in [*ROM_COLUMNS.values(), "Elbow Flexion/Extension"]]
-                values = [30 + (10 + j) * np.sin(2 * np.pi * 0.7 * t) + 2 * np.sin(2 * np.pi * 12 * t) for j in range(len(columns))]
-                columns += [f"{side} Elbow Ulnar Deviation/Radial Deviation" for side in ("Right", "Left")]
-                values += [np.zeros_like(t), np.zeros_like(t)]
-            elif name == "Segment Velocity":
-                bases = ["T8", *[f"{side} {segment}" for side in ("Right", "Left") for segment in list(SEGMENTS.values())[1:]]]
-                columns = [f"{base} {axis}" for base in bases for axis in "xyz"]
-                values = [variation * (0.2 + (j + 1) / 100 + 0.06 * np.sin(2 * np.pi * (0.7 + j / 20) * t)
-                                      + 0.08 * np.sin(2 * np.pi * 17 * t)) for j in range(len(columns))]
-            elif name == "Segment Position":
-                columns = [f"{side} Hand {axis}" for side in ("Right", "Left") for axis in "xyz"]
-                values = [variation * 0.1 * np.sin(2 * np.pi * (0.4 + j / 10) * t) + j / 3 for j in range(len(columns))]
-                bend = np.deg2rad(40 + 20 * np.sin(2 * np.pi * .7 * t))
-                for side, direction, offset in (("Right", -1, 0), ("Left", 1, 3)):
-                    hand = np.column_stack(values[offset:offset+3])
-                    upper_axis = np.column_stack([np.zeros_like(t), np.ones_like(t), np.zeros_like(t)])
-                    forearm_axis = np.column_stack([-np.sin(bend), np.cos(bend), np.zeros_like(t)])
-                    forearm = hand - direction * forearm_axis * .3
-                    upper = forearm - direction * upper_axis * .3
-                    for segment, points in (("Upper Arm", upper), ("Forearm", forearm)):
-                        columns += [f"{side} {segment} {axis}" for axis in "xyz"]
-                        values += [points[:,j] for j in range(3)]
-            elif name == "Ergonomic Joint Angles ZXY":
-                columns = list(COMP_COLUMNS.values())
-                values = [3 + 5 * np.sin(2 * np.pi * 0.6 * t), 5 + 10 * np.sin(2 * np.pi * 0.7 * t)]
-            else:
-                columns, values = ["unused"], [t]
-            sheet.append(["Frame", *columns])
-            for i in range(240):
-                sheet.append([1000 + i, *[float(v[i]) for v in values]])
-        book.save(source)
+        synthetic_recording(raw / f"SANI/SANO_FG91/XSens/FG91_t1_task1_{file_side}.xlsx", file_side)
     output = tmp_path / "standardized"
     write_plan(make_plan(scan(raw)), output)
     subject = output / "SANI/SANO_FG91"
@@ -190,6 +202,53 @@ def test_bad_hand_keeps_other_features_and_excludes_both_paired_distances(full_s
     assert report["computed_feature_values"] == 112
     assert all(row["dtw_hand"] is None for r in report["results"] for row in r["feature_rows"])
     assert not report["pairs"]
+
+
+def independent_levers(recording):
+    """Median over frames of the distance between two segment origins (11 Nov rule), from the raw sheet."""
+    side = recording.record["anatomical_side"].title()
+    position = recording.read_table("Segment Position").to_pandas()
+    point = lambda segment: position[[f"{segment} {axis}" for axis in "xyz"]].to_numpy(dtype=float)
+    pairs = {"trunk": ("Pelvis", "T8"), "shoulder": ("Pelvis", f"{side} Shoulder"),
+             "upper_arm": ("Pelvis", f"{side} Upper Arm"), "forearm": (f"{side} Upper Arm", f"{side} Forearm")}
+    return {f"lever_{role}_m": float(np.nanmedian(np.linalg.norm(point(b) - point(a), axis=1))) for role, (a, b) in pairs.items()}
+
+
+def test_speed_levers_are_median_segment_distances_and_change_no_feature(full_subject):
+    before = extract_subject(SubjectReader(full_subject), XsensConfig())
+    rewrite_table(full_subject, "Segment Position",
+                  lambda t: replace_column(t, "T8 x", [None] * 7 + t["T8 x"].to_pylist()[7:]))
+    reader = SubjectReader(full_subject)
+    report = extract_subject(reader, XsensConfig())
+    for result, old in zip(report["results"], before["results"]):
+        record = next(r for r in reader.manifest["records"] if r["source_id"] == result["source_id"])
+        expected = independent_levers(reader.open_xsens(record))
+        assert expected["lever_forearm_m"] == pytest.approx(.3, abs=1e-12)
+        assert len({round(v, 6) for v in expected.values()}) == 4  # four different levers
+        for row, old_row in zip(result["feature_rows"], old["feature_rows"]):
+            assert {k: row[k] for k in expected} == pytest.approx(expected, rel=1e-15)
+            assert all(row[f] == old_row[f] for f in FEATURE_NAMES)  # the levers change no feature
+        assert result["channels"]["speed_levers"]["findings"] == []
+    trunk = [row["lever_trunk_m"] for r in before["results"] for row in r["feature_rows"]]
+    assert trunk != [row["lever_trunk_m"] for r in report["results"] for row in r["feature_rows"]]  # NaN frames left out
+
+
+def test_missing_lever_leaves_only_that_lever_blank_with_a_warning(full_subject):
+    rewrite_table(full_subject, "Segment Position", lambda t: replace_column(t, "Pelvis x", [None] * 240))
+    changed = opened(full_subject).record["source_id"]  # the helper rewrites one of the two recordings
+    report = extract_subject(SubjectReader(full_subject), XsensConfig())
+    assert report["qc_pass_feature_values"] == 120  # every feature still computed
+    assert all(r["status"] == "computed" for r in report["results"])
+    for result in report["results"]:
+        findings = result["channels"]["speed_levers"]["findings"]
+        if result["source_id"] != changed:
+            assert findings == [] and all(row[f"lever_{role}_m"] for row in result["feature_rows"] for role in SEGMENTS)
+            continue
+        assert {(f["feature"], f["severity"], f["reason"]) for f in findings} == {
+            (f"vel_mean_{role}", "warning", "no_finite_distance") for role in ("trunk", "shoulder", "upper_arm")}
+        for row in result["feature_rows"]:
+            assert row["lever_trunk_m"] is row["lever_shoulder_m"] is row["lever_upper_arm_m"] is None
+            assert row["lever_forearm_m"] == pytest.approx(.3, abs=1e-12)
 
 
 def test_compensation_unit_conflict_and_jump_have_local_scope(full_subject):
@@ -410,3 +469,148 @@ def test_progress_reports_recording_failures_and_empty_selections(full_subject, 
     captured = capsys.readouterr()
     assert "selected 0 recording(s)" in captured.err and "empty recording selection" in captured.err
     assert json.loads(captured.out)["subjects"][0]["selected_recordings"] == 0
+
+
+# --- B&B, mot1 and mot2: one window over the whole recording, markers never read ---
+
+@pytest.fixture
+def whole_subject(tmp_path):
+    raw = tmp_path / "raw"
+    folder = raw / "SANI/SANO_FG91/XSens"
+    for side in ("dx", "sx"):
+        synthetic_recording(folder / f"FG91_t1_task1_{side}.xlsx", side)
+        synthetic_recording(folder / f"FG91_t1_b&b_{side}.xlsx", side, markers=())
+    # Marker counts that would be invalid for a task: never read for mot1/mot2.
+    synthetic_recording(folder / "FG91_t1_mot1_dx.xlsx", "dx", markers=(1050, 1100, 1150))
+    synthetic_recording(folder / "FG91_t1_mot1_sx.xlsx", "sx", markers=())
+    synthetic_recording(folder / "FG91_t1_mot2_dx.xlsx", "dx", markers=(1001, 1002, 1003, 1004, 1005, 1006))
+    synthetic_recording(folder / "FG91_t1_mot2_sx.xlsx", "sx", markers=(1100,))
+    output = tmp_path / "standardized"
+    write_plan(make_plan(scan(raw)), output)
+    subject = output / "SANI/SANO_FG91"
+    assert format_subject(subject)["converted"] == 8
+    return subject
+
+
+@pytest.fixture
+def bb_subject(tmp_path):
+    raw = tmp_path / "raw"
+    synthetic_recording(raw / "SANI/SANO_FG91/XSens/FG91_t1_b&b_dx.xlsx", "dx", markers=())
+    output = tmp_path / "standardized"
+    write_plan(make_plan(scan(raw)), output)
+    subject = output / "SANI/SANO_FG91"
+    assert format_subject(subject)["converted"] == 1
+    return subject
+
+
+def task_values(report):
+    return [(r["source_id"], row["repetition"], [row[f] for f in FEATURE_NAMES])
+            for r in report["results"] if r["window_kind"] == "repetition" for row in r["feature_rows"]]
+
+
+def test_bb_and_mot_use_the_whole_recording_without_reading_markers(whole_subject):
+    reader = SubjectReader(whole_subject)
+    report = extract_subject(reader, XsensConfig())
+    whole = [r for r in report["results"] if r["window_kind"] == "whole_recording"]
+    assert sorted((r["activity"], r["anatomical_side"]) for r in whole) == [
+        (activity, side) for activity in ("box_and_blocks", "mot1", "mot2") for side in ("left", "right")]
+    legacy = legacy_oracle()
+    mapping = {"segment_velocity": "Segment Velocity", "segment_position": "Segment Position",
+               "joint_angles_zxy": "Joint Angles ZXY", "ergo_joint_angles_zxy": "Ergonomic Joint Angles ZXY"}
+    b, a = butter(4, 6, fs=60)
+    hands = {}
+    for result in whole:
+        assert result["status"] == "computed" and len(result["feature_rows"]) == 1
+        assert "Markers" not in result["provenance"]["checked_tables"]
+        assert result["marker_selection"]["markers_checked"] is False
+        row = result["feature_rows"][0]
+        assert row["repetition"] is None and row["window_kind"] == "whole_recording"
+        assert (row["start_frame"], row["end_frame_exclusive"], row["row_start"], row["row_end_exclusive"],
+                row["n_samples"], row["duration_s"]) == (1000, 1240, 0, 240, 240, 4.0)
+        assert row["marker_policy_id"] == WHOLE_RECORDING_POLICY_ID and row["temporary_marker_rule"] is False
+        assert row["computed_feature_count"] == row["qc_pass_feature_count"] == 15 and not row["excluded_features"]
+        # Independent values over all 240 samples.
+        record = next(r for r in reader.manifest["records"] if r["source_id"] == result["source_id"])
+        recording, side = reader.open_xsens(record), result["anatomical_side"].title()
+        velocity = recording.read_table("Segment Velocity")
+        xyz = np.column_stack([velocity[f"{side} Forearm {axis}"].to_pylist() for axis in "xyz"])
+        assert row["vel_mean_forearm"] == pytest.approx(np.linalg.norm(filtfilt(b, a, xyz, axis=0, padlen=12), axis=1).mean(), abs=1e-12)
+        angle = np.asarray(recording.read_table("Joint Angles ZXY")[f"{side} Shoulder Flexion/Extension"].to_pylist())
+        assert row["rom_shoulder_flex_ext"] == pytest.approx(np.ptp(filtfilt(b, a, angle, padlen=12)), abs=1e-9)
+        sheets = {k: recording.read_table(v).to_pandas() for k, v in mapping.items()}
+        code = "dx" if side == "Right" else "sx"
+        hands[result["activity"], code] = legacy["preprocess_file"](sheets, {"arto": code}, [(0, 240)]).hand_position_6hz[0]
+    # DTW pairs the two arms of the same activity over the whole recording (left hand mirrored).
+    for result in whole:
+        expected = independent_dtw(hands[result["activity"], "dx"], hands[result["activity"], "sx"] * [1, -1, 1])
+        assert result["feature_rows"][0]["dtw_hand"] == pytest.approx(expected, abs=1e-12)
+    activities = [p["activity"] for p in report["pairs"]]
+    assert sorted(activities) == ["box_and_blocks", "mot1", "mot2", "task1", "task1", "task1", "task1"]
+    # Adding B&B and mot changes nothing for the task repetitions, DTW included.
+    tasks_only = extract_subject(SubjectReader(whole_subject), XsensConfig(), activities=["task1"])
+    assert task_values(report) == task_values(tasks_only) and len(task_values(report)) == 8
+    assert [p["pair_id"] for p in report["pairs"] if p["activity"] == "task1"] == [p["pair_id"] for p in tasks_only["pairs"]]
+    assert report["qc_pass_feature_values"] == (8 + 6) * 15
+
+
+def test_whole_recording_without_partner_keeps_14_features(bb_subject):
+    result = extract_subject(SubjectReader(bb_subject), XsensConfig())["results"][0]
+    row = result["feature_rows"][0]
+    assert row["dtw_hand"] is None and row["computed_feature_count"] == 14
+    assert [f["code"] for f in result["flags"]] == ["dtw_reference_missing"]
+
+
+def test_whole_recording_leaves_out_nonfinite_edges_but_never_crops_inside(bb_subject):
+    column = "Right Forearm x"
+    def edges(table):
+        values = table[column].to_pylist()
+        values[:3], values[-2:] = [None] * 3, [float("nan")] * 2
+        return replace_column(table, column, values)
+    rewrite_table(bb_subject, "Segment Velocity", edges)
+    result = extract_xsens(opened(bb_subject)).report
+    row = result["feature_rows"][0]
+    assert (row["start_frame"], row["end_frame_exclusive"], row["row_start"], row["row_end_exclusive"], row["n_samples"]) == (
+        1003, 1238, 3, 238, 235)
+    assert row["computed_feature_count"] == 14  # 15 minus DTW, which waits for the other arm
+    flag = next(f for f in result["flags"] if f["code"] == "leading_or_trailing_missing_samples_outside_windows")
+    assert flag["leading_frames"] == [1000, 1001, 1002] and flag["trailing_frames"] == [1238, 1239]
+    assert flag["treatment"] == "whole-recording window limited to the contiguous finite span"
+    def interior(table):
+        values = table[column].to_pylist()
+        values[:3], values[-2:], values[120] = [0.2] * 3, [0.2] * 2, None
+        return replace_column(table, column, values)
+    rewrite_table(bb_subject, "Segment Velocity", interior)
+    row = extract_xsens(opened(bb_subject)).report["feature_rows"][0]
+    assert (row["row_start"], row["n_samples"]) == (0, 240)
+    assert row["vel_mean_forearm"] is None and row["sparc_forearm"] is None
+    assert row["computed_feature_count"] == 12
+    assert set(row["excluded_features"]) == {"vel_mean_forearm", "sparc_forearm", "dtw_hand"}
+
+
+def test_unsupported_whole_recording_shapes_are_refused():
+    from xsens_code.xsens import window_kind
+    assert window_kind({"representation": "full_recording", "task": None, "activity": "mot2"}) == "whole_recording"
+    assert window_kind({"representation": "full_recording", "task": 3, "activity": "task3"}) == "repetition"
+    for record in ({"representation": "individual_repetition", "task": None, "activity": "box_and_blocks"},
+                   {"representation": "full_recording", "task": None, "activity": None}):
+        with pytest.raises(DataContractError) as exc:
+            window_kind(record)
+        assert exc.value.code == "unsupported_activity"
+
+
+def test_cli_selects_every_activity_by_default_and_filters_by_activity_or_task(whole_subject, tmp_path):
+    output = tmp_path / "all"
+    assert main(["xsens-features", str(whole_subject), "--output", str(output), "--no-progress"]) == 0
+    rows = pq.read_table(output / "features.parquet").to_pylist()
+    whole = [r for r in rows if r["window_kind"] == "whole_recording"]
+    assert len(rows) == 14 and len(whole) == 6
+    assert {r["activity"] for r in rows} == {"task1", "box_and_blocks", "mot1", "mot2"}
+    assert all(r["repetition"] is None and r["task"] is None and r["dtw_hand"] is not None for r in whole)
+    assert all(r["marker_policy_id"] == WHOLE_RECORDING_POLICY_ID for r in whole)
+    metadata = json.loads((output / "metadata.json").read_text())
+    assert metadata["filters"]["activities"] == list(ACTIVITIES)
+    assert metadata["method"]["windows"]["whole_recording"]["policy_id"] == WHOLE_RECORDING_POLICY_ID
+    for flag, value, expected in (("--activity", "box_and_blocks", {"box_and_blocks"}), ("--task", "1", {"task1"})):
+        selected = tmp_path / f"only-{value}"
+        assert main(["xsens-features", str(whole_subject), "--output", str(selected), flag, value, "--no-progress"]) == 0
+        assert {r["activity"] for r in pq.read_table(selected / "features.parquet").to_pylist()} == expected

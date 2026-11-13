@@ -11,7 +11,8 @@ import re
 from . import SCHEMA_VERSION
 from .inspection import XSENS_SHEETS, inspect_file, read_patient_metadata
 from .naming import COHORTS, filename_subject, parse_xsens_name
-from .policy import POLICY, apply_selection
+from .policy import POLICY, apply_selection, exclude_hd_without_reexport
+from .reexports import declared_visit, in_declared_folder
 
 
 def now() -> str:
@@ -64,6 +65,10 @@ def inspect_source(root: Path, path: Path, stat=None, *, logical_path: str | Non
             record["issues"].append("empty_file")
         modality_folder = parts[2].casefold() if len(parts) >= 4 else ""
         folder_modality = {"xsens": "xsens", "garmin": "garmin", "motore": "motore"}.get(modality_folder, "unknown")
+        # A re-export folder declared in reexports.json counts as Xsens for its declared visits only.
+        reexport_folder = in_declared_folder(rel)
+        if reexport_folder:
+            folder_modality = "xsens"
         record["modality"] = folder_modality
         record.update(inspect_file(path))
         if record["inspection_status"] == "inspection_error":
@@ -86,6 +91,10 @@ def inspect_source(root: Path, path: Path, stat=None, *, logical_path: str | Non
                     record["issues"].append("timepoint_folder_conflict")
                 if parsed["timepoint"] is None:
                     record["issues"].append("timepoint_unresolved")
+                if reexport_folder and not declared_visit(rel, parsed["timepoint"]):
+                    record["issues"].append("modality_folder_conflict")
+                elif declared_visit(rel, parsed["timepoint"]):
+                    record["export_role"] = "declared_reexport" if reexport_folder else "original"
                 if parsed["original_limb_code"] == "sim":
                     record["issues"].append("simulated_side_unresolved")
         elif path.suffix.lower() == ".xlsx" and "TIMELINE_01" in record["sheets"] and len(parts) == 3 and cohort == "PAZIENTI":
@@ -195,6 +204,7 @@ def finish_inventory(root: Path, started: str, files: list[dict], subjects: list
                 file["issues"].append("archive_and_loose_table_overlap_candidate")
                 file["disposition"] = "needs_review"
     apply_selection(files)
+    exclude_hd_without_reexport(files, root)
     for file in files:
         for code in sorted(set(file["issues"])):
             severity = "error" if code in {"subject_identity_conflict", "modality_folder_conflict", "timepoint_folder_conflict",

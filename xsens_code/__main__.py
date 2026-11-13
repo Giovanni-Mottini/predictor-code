@@ -1,4 +1,5 @@
-"""Xsens quaternion-default features, repetition inspection and local raw-to-XLSX pipeline."""
+"""Xsens quaternion-default features (tasks 1-4 per repetition; B&B, mot1, mot2 per whole recording),
+repetition inspection and local raw-to-XLSX pipeline."""
 from __future__ import annotations
 
 import argparse
@@ -10,18 +11,20 @@ from shared_code.progress import ProgressReporter
 from shared_code.reader import DataContractError, SubjectReader
 from . import SEGMENTATION_METHOD
 from .repetitions import audit_subject, write_windows
+from .xsens import ACTIVITIES
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    features = sub.add_parser("xsens-features", help="Extract fifteen features with quaternion elbow bending")
+    features = sub.add_parser("xsens-features", help="Extract the features: tasks 1-4 per repetition, B&B/mot1/mot2 per whole recording")
     repetitions = sub.add_parser("xsens-repetitions", help="Inspect task windows and export structured metadata")
     pipeline = sub.add_parser("pipeline", help="Prepare Dati PREDICTOR, extract features and create patient workbooks")
     pipeline.add_argument("source", type=Path, help="Local Dati PREDICTOR directory")
     pipeline.add_argument("--subject", action="append", required=True, help="PAZIENTI/<subject>; repeatable")
     pipeline.add_argument("--standardized", type=Path, default=Path("standardized"))
-    pipeline.add_argument("--output", type=Path, default=Path("OUTPUT"))
+    pipeline.add_argument("--output", type=Path, default=Path("OUTPUT"),
+                          help="Fresh folder; the length-normalized copy goes next to it as <name>_SPEED_LENGTH")
     pipeline.add_argument("--work-directory", type=Path, help="Fresh run directory; default: derived/xsens/<unique-run>")
     for command in (features, repetitions):
         command.add_argument("subjects", nargs="+", type=Path, help="Explicit standardized participant directories")
@@ -34,6 +37,8 @@ def main(argv=None) -> int:
         command.add_argument("--task", type=int, action="append", choices=[1, 2, 3, 4])
         command.add_argument("--no-progress", action="store_true")
     for command in (features, pipeline):
+        command.add_argument("--activity", action="append", choices=list(ACTIVITIES),
+                             help="Only this activity; repeatable. Default: tasks 1-4, box_and_blocks, mot1 and mot2")
         command.add_argument("--cutoff-hz", type=float, default=6.0)
         command.add_argument("--sparc-cutoff-hz", type=float, default=15.0)
     args = parser.parse_args(argv)

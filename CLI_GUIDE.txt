@@ -22,6 +22,7 @@ To save it in a file, add at the end:  2>&1 | tee execution.log
 - Garmin for chosen dates                 -> section 6
 - read the results                        -> section 8
 - something went wrong                    -> section 9
+- rank features, correlate with scales    -> section 12
 
 If the patient is already in standardized/, skip section 3.
 If the original files changed, run section 3 again.
@@ -49,7 +50,8 @@ You can safely run it again: finished and unchanged work is reused.
 
 4. XSENS FEATURES
 
-All 15 features, FG91 visit T1:
+All features, FG91 visit T1 (tasks 1-4 per repetition; B&B, mot1 and
+mot2 as one whole recording each):
 
     predictor_import/.venv/bin/python -m xsens_code xsens-features \
       standardized/PAZIENTI/FG91 --session T1 \
@@ -60,7 +62,9 @@ Then open features.csv in the output folder.
 Options:
 - --session T1           visit; repeat for more. None = all visits
 - --timepoint T1         clinical timepoint (can differ from session)
-- --task 4               task 1, 2, 3 or 4; repeat. None = tasks 1-4
+- --activity mot1        task1-task4, box_and_blocks, mot1 or mot2; repeat.
+                         None = all of them
+- --task 4               task 1, 2, 3 or 4 only (no B&B, no mot); repeat
 - --limb-condition X     paretic, non_paretic or simulated
 - --anatomical-side X    left or right
 - --cutoff-hz 6          signal filter (default 6 Hz)
@@ -71,7 +75,9 @@ Notes:
 - The hand comparison (DTW) needs BOTH arms in the selection.
   Leave the side filters off, or that value stays blank.
 - DTW also needs the T8 orientation data; without it only DTW is blank.
-- Out of scope: B&B, single exported repetitions, MOTORE.
+- B&B, mot1, mot2: no markers needed; one row per recording, column
+  window_kind = whole_recording; DTW compares the two arms' whole recordings.
+- Out of scope: single exported repetitions, the robot files in MOTORE/.
 
 Check repetitions only (no features):
 
@@ -81,7 +87,12 @@ Check repetitions only (no features):
 
 Raw files to Excel in one step: see "xsens_code pipeline" in README.txt.
 Pipeline options: --subject (repeat), --standardized, --output,
---work-directory, --session, --timepoint, --task, cutoffs.
+--work-directory, --session, --timepoint, --task, --activity, cutoffs.
+Pipeline OUTPUT layout (same as "Features Example"): Features_Xsens_Task_1-4/
+Pazienti and Pazienti_Paretic_AVG, "features b&b", "features XSens Motore".
+The same run also writes <OUTPUT>_SPEED_LENGTH next to it: same layout,
+speeds divided by their lever length. Both must be new folders.
+Details in README.txt sections 3 and 4.
 
 
 5. GARMIN FEATURES T1-T10 (main Garmin command)
@@ -261,7 +272,29 @@ Rename old prepared folders (contents unchanged):
 Remove --dry-run to apply. Garmin: migrate-garmin-layout.
 
 
-12. LOCAL TOOLS (not in the shared repository)
+12. FEATURE IMPORTANCE AND CLINICAL CORRELATION
+
+Separate environment (scikit-learn, scipy), once:
+
+    python3 -m venv .venv-analysis
+    .venv-analysis/bin/python -m pip install -r correlation_code/requirements.txt
+
+It also installs feature_importance_code's requirements. Then, from the
+project root (P=.venv-analysis/bin/python, RUN = a pipeline work directory):
+
+- importance    $P -m feature_importance_code run --patients RUN --speed length
+                --output reports/feature_importance/<new>
+                (--volunteers <tables> for healthy vs simulated)
+- correlation   $P -m correlation_code tasks --features RUN
+                --workbooks "Dati PREDICTOR/PAZIENTI" --speed length --output <new>
+                xsens-motore: same options (mot1, mot2 recordings)
+                robot: --exports "Dati PREDICTOR/PAZIENTI" instead of --speed
+
+Output folders must be new; results name patients, keep them under reports/.
+Details: feature_importance_code/README.txt, correlation_code/README.txt.
+
+
+13. LOCAL TOOLS (not in the shared repository)
 
 These run only on a computer that has the local files.
 
@@ -269,6 +302,17 @@ These run only on a computer that has the local files.
                      --reports <folder> [--dry-run] [--local-source "Dati PREDICTOR"]
                      needs rclone with a remote called predictor:
 - raw Drive copy     scripts/update_predictor_copy.py --background
+- dataset update     scripts/update_dataset.py --background [--prepare-first]
+                     [--cohort PAZIENTI] [--skip-modality MOTORE]
+                     Drive copy, standardize, then move out what Drive no longer has;
+                     one progress.html in reports/dataset-update/<run>/; frozen
+                     participants are skipped;
+                     files outside the scope are neither downloaded nor removed
+- Xsens outputs      scripts/export_xsens_outputs.py <pipeline output> <new parent>
+                     --run-json <run>/run.json [--note TEXT]
+                     builds OUTPUT_Xsens (complete visits only) and OUTPUT_Xsens_AVG
+                     (paretic arm, mean of the 4 repetitions per task) from an
+                     older pipeline output; a pipeline run now writes both itself
 - plausibility       python -m shared_code.screen_plausibility <patients>
                      --output <new folder> [--modality xsens|garmin|both] [--ranges FILE]
 - benchmark          python -m predictor_import.benchmark <patient> --output <folder>

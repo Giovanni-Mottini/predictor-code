@@ -12,7 +12,8 @@ from scipy.signal import butter, filtfilt
 from shared_code.reader import DataContractError
 from predictor_import.markers import MARKER_POLICY_ID
 from .reader import XsensRecording
-from .xsens import build_windows, frame_axis, numerical_screen, selected_boundaries, source_sampling_rate
+from .xsens import (WHOLE_RECORDING_POLICY_ID, frame_axis, numerical_screen, segment_selection, segment_windows,
+                    source_sampling_rate, window_kind)
 
 ROM_METHOD_ID = "xsens-shoulder-rom-zxy-unwrap360-butterworth4-filtfilt-v3"
 ROM_QC_POLICY_ID = "xsens-rom-channel-finite-unwrap360-v2"
@@ -149,8 +150,7 @@ def range_evidence(filtered: np.ndarray, window, frames: list[int]) -> dict:
 
 def extract_rom(recording: XsensRecording, config: ROMConfig = ROMConfig()) -> dict:
     record = recording.record
-    if record.get("task") not in {1, 2, 3, 4} or record.get("representation") != "full_recording":
-        raise DataContractError("unsupported_activity", "ROM method covers full task1-task4 only")
+    kind = window_kind(record)
     side = record.get("anatomical_side")
     if side not in {"left", "right"}:
         raise DataContractError("anatomical_side_unresolved", "ROM needs an explicit canonical anatomical side")
@@ -158,12 +158,12 @@ def extract_rom(recording: XsensRecording, config: ROMConfig = ROMConfig()) -> d
     for cutoff in (config.cutoff_hz, *config.comparison_cutoffs_hz):
         if cutoff >= fs / 2:
             raise DataContractError("cutoff_above_nyquist", f"Requested cutoff {cutoff:g} is not below Nyquist {fs / 2:g} Hz")
-    selection = selected_boundaries(recording)
+    selection = segment_selection(recording)
     table = recording.read_table("Joint Angles ZXY")
     frames = frame_axis(table, "Joint Angles ZXY")
     if len(frames) < 2:
         raise DataContractError("recording_too_short", "Filtering requires at least two samples")
-    windows = build_windows(frames, selection["boundary_frames"], fs)
+    windows = segment_windows(selection, frames, fs)
     flags = [{"code": code, "severity": "warning", "origin": "formatter"} for code in recording.descriptor.get("warnings", [])]
     channels = {}
     columns = {c["name"]: c for c in recording.table_descriptor("Joint Angles ZXY")["columns"]}
@@ -229,9 +229,11 @@ def extract_rom(recording: XsensRecording, config: ROMConfig = ROMConfig()) -> d
             candidate_by_feature[feature][float(cutoff)] = candidate
     rows, comparisons = [], []
     for window in windows:
-        row = {**asdict(window), "sampling_rate_hz": fs, "feature_unit": "deg", "method_id": ROM_METHOD_ID,
+        row = {**asdict(window), "window_kind": kind, "sampling_rate_hz": fs, "feature_unit": "deg", "method_id": ROM_METHOD_ID,
                "method_sha256": config.fingerprint(), "marker_policy_id": selection["policy_id"],
                "temporary_marker_rule": selection["rule_applied"], "feature_evidence": {}, "feature_status": {}}
+        if selection["policy_id"] == WHOLE_RECORDING_POLICY_ID:
+            row["repetition"] = None  # No repetitions exist; window number 1 stays only in evidence keys.
         for feature, channel in channels.items():
             evidence = range_evidence(filtered_by_feature[feature], window, frames) if feature in filtered_by_feature else {"value": None}
             if feature in wrapped_baselines and evidence["value"] is not None:

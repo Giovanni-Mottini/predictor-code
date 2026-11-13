@@ -11,7 +11,15 @@ from shared_code.io import atomic_json
 from . import SCHEMA_VERSION
 from .inventory import now
 from .policy import POLICY
+from .reexports import marker_source
 from .storage_names import garmin_export_name, garmin_targets, xsens_recording_name, xsens_targets
+
+# Dataset-owner decisions that replace the workbook-derived paretic side for one participant.
+# The workbook values stay in clinical_metadata["side_override"] and records carry
+# side_evidence "side_override_table", so the override is visible downstream.
+# The table names real participants, so it is git-ignored and optional: without it nothing changes.
+_SIDE_TABLE = Path(__file__).with_name("side_overrides.json")
+SIDE_OVERRIDES = json.loads(_SIDE_TABLE.read_text(encoding="utf-8")) if _SIDE_TABLE.exists() else {}
 
 
 def clinical_metadata(subject: dict, files: list[dict]) -> dict:
@@ -40,6 +48,14 @@ def clinical_metadata(subject: dict, files: list[dict]) -> dict:
         result["non_paretic_side"] = result["lesion_hemisphere"]
         result["paretic_side"] = "left" if result["lesion_hemisphere"] == "right" else "right"
         result["side_derivation_rule"] = "paretic_arm_contralateral_to_lesion_hemisphere"
+    override = SIDE_OVERRIDES.get(subject.get("participant_key"))
+    if override and result["paretic_side"]:
+        paretic = override["paretic_side"]
+        assert paretic in {"left", "right"}, "side override must name left or right"
+        result["side_override"] = {"workbook_paretic_side": result["paretic_side"],
+                                   "workbook_non_paretic_side": result["non_paretic_side"], **override}
+        result["paretic_side"], result["non_paretic_side"] = paretic, "left" if paretic == "right" else "right"
+        result["side_derivation_rule"] = "side_override_table"
     return result
 
 
@@ -54,7 +70,7 @@ def canonical_record(file: dict, clinical: dict) -> dict:
         condition = POLICY["numeric_limb_codes"][code]
         side = clinical[f"{condition}_side"] if file["cohort"] == "PAZIENTI" else None
         if side:
-            side_evidence = "clinical_workbook_and_contralateral_rule"
+            side_evidence = "side_override_table" if clinical.get("side_override") else "clinical_workbook_and_contralateral_rule"
     elif code == "sim":
         condition = "simulated"
     elif file["cohort"] == "SANI" and code in {"dx", "sx"}:
@@ -84,6 +100,14 @@ def canonical_record(file: dict, clinical: dict) -> dict:
         "expected_marker_count": POLICY["expected_task_marker_count"] if parsed.get("task") and parsed.get("representation") == "full_recording" else None,
         "simulation_types_by_repetition": None,
     }
+    # reexports.json provenance; the keys exist only on records of declared visits.
+    for key in ("export_role", "replaces_source_ids", "processing_quality"):
+        if key in file:
+            record[key] = file[key]
+    if file.get("export_role") == "declared_reexport" and file["disposition"] == "mapped":
+        found = marker_source(file["source_path"])
+        if found:
+            record["marker_source"] = found
     if not record["session_id"] and file["cohort"] == "SANI" and file["artifact_kind"] == "xsens_workbook":
         record["session_id"] = "unlabelled_sani_acquisition"
     if file["disposition"] != "mapped":
@@ -225,8 +249,9 @@ def write_plan(plan: dict, output: Path, *, hash_sources: bool = False) -> dict:
                 "paretic_side": None, "non_paretic_side": None, "dominant_hand": None,
                 "timeline_dates": {}, "side_derivation_rule": None})
             document["clinical_metadata"]["hemisphere_evidence"] = []
+            document["clinical_metadata"].pop("side_override", None)
             for record in manifest["records"]:
-                if record["side_evidence"] == "clinical_workbook_and_contralateral_rule":
+                if record["side_evidence"] in ("clinical_workbook_and_contralateral_rule", "side_override_table"):
                     record["anatomical_side"] = None
                     record["side_evidence"] = None
                 record["acquisition_date"] = None

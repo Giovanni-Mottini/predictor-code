@@ -15,6 +15,52 @@ from .reader import XsensRecording
 SIGNAL_SHEETS = ("Segment Velocity", "Segment Position", "Joint Angles ZXY",
                  "Ergonomic Joint Angles ZXY")
 
+# Activities recorded without repetitions: one window covers the whole recording
+# and the Markers sheet is neither read nor checked.
+WHOLE_RECORDING_ACTIVITIES = ("box_and_blocks", "mot1", "mot2")
+# Default feature selection: tasks with repetitions, then the whole recordings.
+ACTIVITIES = ("task1", "task2", "task3", "task4", *WHOLE_RECORDING_ACTIVITIES)
+WHOLE_RECORDING_POLICY = {
+    "policy_id": "xsens-whole-recording-no-marker-check-v1",
+    "activities": list(WHOLE_RECORDING_ACTIVITIES),
+    "window": "one window from the first to the last processed frame of the recording",
+    "markers": "not read and not checked; the recording has no repetitions",
+    "edges": "leading/trailing nonfinite samples of the used channels are left out (contiguous finite span); no imputation",
+    "dtw_hand": "whole hand trajectories of the two arms, same visit and same activity; same centering, heading and mirroring as tasks",
+}
+WHOLE_RECORDING_POLICY_ID = WHOLE_RECORDING_POLICY["policy_id"]
+
+
+def window_kind(record: dict) -> str:
+    """'repetition' for full task1-task4 recordings, 'whole_recording' for B&B, mot1 and mot2."""
+    if record.get("representation") == "full_recording":
+        if record.get("task") in {1, 2, 3, 4}:
+            return "repetition"
+        if record.get("task") is None and record.get("activity") in WHOLE_RECORDING_ACTIVITIES:
+            return "whole_recording"
+    raise DataContractError("unsupported_activity",
+                            "Feature method covers full task1-task4 recordings and whole B&B, mot1 and mot2 recordings only")
+
+
+def whole_recording_selection(recording: XsensRecording) -> dict:
+    """Window metadata for a recording without repetitions; markers are not consulted."""
+    return {"policy_id": WHOLE_RECORDING_POLICY_ID, "rule_applied": False, "temporary": False,
+            "markers_checked": False, "source_marker_count": recording.descriptor.get("observed_marker_count"),
+            "boundary_frames": None, "valid_for_expected_repetitions": None}
+
+
+def segment_selection(recording: XsensRecording) -> dict:
+    """Five checked markers for tasks 1-4; no marker check for whole recordings."""
+    if window_kind(recording.record) == "whole_recording":
+        return whole_recording_selection(recording)
+    return selected_boundaries(recording)
+
+
+def segment_windows(selection: dict, frames: list[int], fs: float) -> list["RepetitionWindow"]:
+    if selection["policy_id"] == WHOLE_RECORDING_POLICY_ID:
+        return [whole_window(frames, fs)]
+    return build_windows(frames, selection["boundary_frames"], fs)
+
 
 @dataclass(frozen=True)
 class RepetitionWindow:
@@ -77,6 +123,17 @@ def build_windows(frames: list[int], boundaries: list[int], fs: float) -> list[R
         windows.append(RepetitionWindow(rep, boundaries[rep - 1], boundaries[rep], start, end,
                                         count, frames[start], frames[end - 1], count / fs, (count - 1) / fs))
     return windows
+
+
+def whole_window(frames: list[int], fs: float) -> RepetitionWindow:
+    """One [first, last + 1) window over a checked, contiguous frame axis."""
+    if (isinstance(fs, bool) or not isinstance(fs, (int, float)) or not math.isfinite(fs) or fs <= 0):
+        raise DataContractError("sampling_rate_invalid", "A finite positive source sampling rate is required")
+    if len(frames) < 2:
+        raise DataContractError("recording_too_short", "A whole-recording window needs at least two samples")
+    count = len(frames)
+    return RepetitionWindow(1, frames[0], frames[-1] + 1, 0, count, count, frames[0], frames[-1],
+                            count / fs, (count - 1) / fs)
 
 
 def source_sampling_rate(recording: XsensRecording) -> float:

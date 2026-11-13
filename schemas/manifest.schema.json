@@ -369,6 +369,35 @@
             "null"
           ]
         },
+        "export_role": {
+          "description": "Only in visits declared in predictor_import/reexports.json",
+          "enum": [
+            "original",
+            "declared_reexport"
+          ]
+        },
+        "replaces_source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "processing_quality": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "marker_source": {
+          "description": "Reviewed substitution of the re-export's markers by the original export's",
+          "type": "object",
+          "required": [
+            "reexport_sha256",
+            "original_source_path",
+            "original_sha256",
+            "frames"
+          ]
+        },
         "selected_archive_members": {
           "type": [
             "array",

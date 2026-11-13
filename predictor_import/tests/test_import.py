@@ -136,6 +136,33 @@ def test_patient_metadata_and_exact_dates(source):
     assert all(not r["ready_for_features"] for r in records.values())
 
 
+def test_side_override_replaces_workbook_side_and_stays_visible(source, monkeypatch):
+    from predictor_import import adapter
+    monkeypatch.setitem(adapter.SIDE_OVERRIDES, "PAZIENTI/FG91", {"paretic_side": "right", "rule": "test", "reason": "test"})
+    workbook(source / "PAZIENTI/FG91/FG91.xlsx", metadata_id="FG91")            # right hemisphere -> workbook says left
+    workbook(source / "PAZIENTI/FG91/Xsens/T1/FG91_01_TASK1_T1.xlsx")
+    workbook(source / "PAZIENTI/FG91/Xsens/T5/FG91_00_TASK2_T5.xlsx")
+    plan = make_plan(scan(source), "PAZIENTI/FG91")
+    metadata = plan["subjects"][0]["subject"]["clinical_metadata"]
+    assert (metadata["paretic_side"], metadata["non_paretic_side"]) == ("right", "left")
+    assert metadata["lesion_hemisphere"] == "right"
+    assert metadata["side_override"]["workbook_paretic_side"] == "left"
+    assert metadata["side_derivation_rule"] == "side_override_table"
+    records = {r["timepoint"]: r for r in plan["subjects"][0]["manifest"]["records"] if r["timepoint"]}
+    assert (records["T1"]["limb_condition"], records["T1"]["anatomical_side"]) == ("paretic", "right")
+    assert (records["T5"]["limb_condition"], records["T5"]["anatomical_side"]) == ("non_paretic", "left")
+    assert {records[t]["side_evidence"] for t in ("T1", "T5")} == {"side_override_table"}
+
+
+def test_local_side_override_table_is_well_formed():
+    # side_overrides.json is local and optional (git-ignored); check its shape only.
+    from predictor_import.adapter import SIDE_OVERRIDES
+    for key, entry in SIDE_OVERRIDES.items():
+        assert key.startswith("PAZIENTI/") and key.split("/")[1] == key.split("/")[1].upper()
+        assert entry["paretic_side"] in {"left", "right"}
+        assert entry.get("rule") and entry.get("reason") and entry.get("decided_on")
+
+
 def test_explicit_day_uses_exact_timeline_date(source):
     workbook(source / "PAZIENTI/FG91/FG91_VAL.xlsx", metadata_id="FG91")
     workbook(source / "PAZIENTI/FG91/Xsens/FG91_1_TASK1_T1_d2.xlsx")
@@ -392,16 +419,26 @@ def test_sani_simulation_is_distinct_from_actual_paresis(source):
     assert record["disposition"] == "mapped"
 
 
-def test_motore_and_xsens_mot_activities_are_ignored(source):
+def test_motore_folder_is_ignored_but_xsens_mot_recordings_are_mapped_without_markers(source):
     workbook(source / "SANI/SANO_BA001/XSens/BA001_t1_mot1_dx.xlsx")
+    workbook(source / "PAZIENTI/FG91/XSens/T1/FG91_01_mot2_T1.xlsx")
+    workbook(source / "PAZIENTI/FG91/MOTORE/FG91_01_mot1_T1.xlsx")  # inside MOTORE: still out of scope
     folder = source / "SANI/SANO_BA001/MOTORE"
     folder.mkdir()
     (folder / "stats.json").write_text('{}')
     inventory = scan(source)
-    assert all(f["disposition"] == "excluded" for f in inventory["files"])
-    assert all(f["selection_reason"] == "motore_out_of_scope" for f in inventory["files"])
-    assert len(make_plan(inventory)["subjects"][0]["manifest"]["records"]) == 2
-    assert inventory["summary"]["data_file_count"] == 2
+    files = {f["source_path"]: f for f in inventory["files"]}
+    for path in ("SANI/SANO_BA001/MOTORE/stats.json", "PAZIENTI/FG91/MOTORE/FG91_01_mot1_T1.xlsx"):
+        assert (files[path]["disposition"], files[path]["selection_reason"]) == ("excluded", "motore_out_of_scope")
+    for path, activity in (("SANI/SANO_BA001/XSens/BA001_t1_mot1_dx.xlsx", "mot1"),
+                           ("PAZIENTI/FG91/XSens/T1/FG91_01_mot2_T1.xlsx", "mot2")):
+        assert files[path]["disposition"] == "mapped" and files[path]["selection_reason"] == "recognized_source"
+        assert files[path]["parsed_name"]["activity"] == activity
+    plan = make_plan(inventory)
+    records = [r for s in plan["subjects"] for r in s["manifest"]["records"] if r["disposition"] == "mapped"]
+    assert {r["activity"] for r in records} == {"mot1", "mot2"}
+    assert all(r["task"] is None and r["expected_marker_count"] is None and r["expected_repetitions"] is None for r in records)
+    assert inventory["summary"]["data_file_count"] == 4
 
 
 def test_archive_preference_does_not_hide_loose_tables_missing_from_archive(source):

@@ -15,12 +15,15 @@
 !/schemas/
 !/archive/
 !/garmin_code/
+!/feature_importance_code/
+!/correlation_code/
 
 # Personal implementation walkthrough; share separately when needed.
 /ANGLE_UNWRAPPING_AND_QUATERNION_ROM.local.md
 
 # Experimental code and its historical maintenance helpers stay local.
 /explorations/
+/feature_analysis_code/
 /garmin_code/scripts/
 /garmin_code/tests/test_explore_user_garmin.py
 /garmin_code/plausibility.py

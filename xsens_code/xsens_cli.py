@@ -20,20 +20,24 @@ from shared_code.io import atomic_json
 from shared_code.artifacts import CANONICAL_FIELDS, atomic_csv, now
 from shared_code.reader import DataContractError, SubjectReader
 from shared_code.progress import ProgressReporter
-from .xsens_features import FEATURE_NAMES, XsensConfig, extract_xsens
+from .xsens import ACTIVITIES, window_kind
+from .xsens_features import FEATURE_NAMES, LEVER_FIELDS, XsensConfig, extract_xsens
 from .xsens_dtw import pair_hand_dtw
 
-FEATURE_FIELDS = ("participant_key", *CANONICAL_FIELDS, "recorded_at_utc", "source_sha256", "repetition", "start_frame", "end_frame_exclusive",
+FEATURE_FIELDS = ("participant_key", *CANONICAL_FIELDS, "activity", "window_kind", "recorded_at_utc", "source_sha256", "repetition", "start_frame", "end_frame_exclusive",
                   "row_start", "row_end_exclusive", "n_samples", "first_sample_frame", "last_sample_frame", "duration_s", "sample_span_s",
                   "sampling_rate_hz", "method_id", "method_sha256", "marker_policy_id", "temporary_marker_rule", "dtw_pair_id",
-                  *FEATURE_NAMES, "computed_feature_count", "qc_pass_feature_count", "excluded_features", "review_features")
+                  *FEATURE_NAMES, *LEVER_FIELDS, "computed_feature_count", "qc_pass_feature_count", "excluded_features", "review_features")
 
 
 def extract_subject(reader: SubjectReader, config: XsensConfig, *, sessions=None, timepoints=None, tasks=None,
-                    limb_conditions=None, anatomical_sides=None, progress: ProgressReporter | None = None) -> dict:
-    records = reader.select(modality="xsens", sessions=sessions, timepoints=timepoints,
-                            tasks=tasks if tasks is not None else [1, 2, 3, 4],
-                            limb_conditions=limb_conditions, anatomical_sides=anatomical_sides)
+                    limb_conditions=None, anatomical_sides=None, activities=None,
+                    progress: ProgressReporter | None = None) -> dict:
+    """``tasks`` keeps only those task numbers (so no B&B/mot); ``activities`` filters by activity name."""
+    wanted = set(ACTIVITIES if activities is None else activities)
+    records = [r for r in reader.select(modality="xsens", sessions=sessions, timepoints=timepoints, tasks=tasks,
+                                        limb_conditions=limb_conditions, anatomical_sides=anatomical_sides)
+               if r.get("activity") in wanted]
     results, trajectories = [], {}
     if progress:
         progress.update(f"{reader.participant_key}: selected {len(records)} recording(s)")
@@ -41,7 +45,12 @@ def extract_subject(reader: SubjectReader, config: XsensConfig, *, sessions=None
         if progress:
             progress.update(f"Reading/extracting {reader.participant_key}: {record.get('source_path') or record['source_id']}",
                             completed=index - 1, total=len(records))
-        metadata = {"participant_key": reader.participant_key, **{k: record.get(k) for k in CANONICAL_FIELDS}}
+        metadata = {"participant_key": reader.participant_key, **{k: record.get(k) for k in CANONICAL_FIELDS},
+                    "activity": record.get("activity")}
+        try:
+            metadata["window_kind"] = window_kind(record)
+        except DataContractError:
+            metadata["window_kind"] = None
         metadata["recorded_at_utc"] = None
         recording = None
         try:
@@ -70,6 +79,8 @@ def extract_subject(reader: SubjectReader, config: XsensConfig, *, sessions=None
         if hashlib.sha256((reader.root / name).read_bytes()).hexdigest() != expected:
             raise DataContractError("metadata_changed_during_read", f"{name} changed during extraction")
     return {"participant_key": reader.participant_key, "subject_path": str(reader.root),
+            # Workbook sides kept when a side override applies; the CSV column "arto" reports them.
+            "side_override": (reader.subject.get("clinical_metadata") or {}).get("side_override"),
             "download_completeness": reader.subject.get("download_completeness", "unknown"),
             "metadata_sha256": reader.metadata_sha256, "selected_recordings": len(records),
             "recording_status_counts": dict(Counter(r["status"] for r in results)),
@@ -81,7 +92,7 @@ def extract_subject(reader: SubjectReader, config: XsensConfig, *, sessions=None
 def atomic_parquet(path: Path, rows: list[dict]) -> None:
     integers = {"protocol_day", "task", "repetition", "start_frame", "end_frame_exclusive", "row_start", "row_end_exclusive",
                 "n_samples", "first_sample_frame", "last_sample_frame", "computed_feature_count", "qc_pass_feature_count"}
-    floats = {"duration_s", "sample_span_s", "sampling_rate_hz", *FEATURE_NAMES}
+    floats = {"duration_s", "sample_span_s", "sampling_rate_hz", *FEATURE_NAMES, *LEVER_FIELDS}
     fields = [pa.field(name, pa.int64() if name in integers else pa.float64() if name in floats
                        else pa.bool_() if name == "temporary_marker_rule" else pa.string()) for name in FEATURE_FIELDS]
     table = pa.Table.from_pylist(rows, schema=pa.schema(fields))
@@ -104,7 +115,7 @@ def write_features(output: Path, report: dict) -> None:
         pairs.extend(subject["pairs"])
         for result in subject["results"]:
             metadata = {"participant_key": result["participant_key"], **{k: result[k] for k in CANONICAL_FIELDS},
-                        "recorded_at_utc": result.get("recorded_at_utc")}
+                        "activity": result.get("activity"), "recorded_at_utc": result.get("recorded_at_utc")}
             for row in result["feature_rows"]:
                 full = {**metadata, **row, "source_sha256": result["provenance"]["source_sha256"]}
                 full["excluded_features"], full["review_features"] = ";".join(row["excluded_features"]), ";".join(row["review_features"])
@@ -126,7 +137,7 @@ def write_features(output: Path, report: dict) -> None:
         summary = {k: v for k, v in subject.items() if k not in {"results", "pairs"}}
         summary["results"] = [{
             **{k: recording.get(k) for k in ("source_id", "source_path", "recording_id", "session_id", "timepoint",
-                "task", "anatomical_side", "limb_condition", "status", "flags")},
+                "task", "activity", "window_kind", "anatomical_side", "limb_condition", "status", "flags")},
             "feature_rows": len(recording["feature_rows"]),
             "source_sha256": (recording.get("provenance") or {}).get("source_sha256"),
             "processing_span": (recording.get("provenance") or {}).get("finite_span_processing"),
@@ -162,11 +173,12 @@ def run_xsens(args, readers: list[SubjectReader], output: Path, *, progress: Pro
             progress.update(f"Starting participant {reader.participant_key}", completed=index - 1, total=len(readers))
         subjects.append(extract_subject(reader, config, sessions=args.session, timepoints=args.timepoint, tasks=args.task,
                                         limb_conditions=args.limb_condition, anatomical_sides=args.anatomical_side,
-                                        progress=progress))
+                                        activities=args.activity, progress=progress))
         if progress:
             progress.update(f"Participant processed: {reader.participant_key}", completed=index, total=len(readers))
     report = {"report_version": 1, "started_at": started, "finished_at": now(), "method": method,
               "filters": {"sessions": args.session, "timepoints": args.timepoint, "tasks": args.task,
+                          "activities": args.activity or list(ACTIVITIES),
                           "limb_conditions": args.limb_condition, "anatomical_sides": args.anatomical_side},
               "ready_for_features": False, "subjects": subjects}
     if progress:

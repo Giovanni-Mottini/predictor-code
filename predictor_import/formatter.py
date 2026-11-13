@@ -21,6 +21,7 @@ from .adapter import atomic_json
 from .inventory import now
 from .markers import select_marker_boundaries
 from .storage_names import xsens_table_names, xsens_targets
+from .xlsx_repair import load_workbook
 
 FORMATTER_VERSION = "xsens-parquet-0.2.1"
 CHUNK_ROWS = 1024
@@ -208,7 +209,55 @@ def refresh_marker_selection(descriptor: dict) -> bool:
     return changed
 
 
-def convert_record(source: Path, record: dict, target: Path, policy_id: str) -> dict:
+def override_key(block: dict | None) -> tuple | None:
+    """What makes a marker substitution the same one: re-export, original and frames."""
+    if not block:
+        return None
+    return (block.get("reexport_sha256"), block.get("original_source_path"), block.get("original_sha256"),
+            tuple(block.get("frames") or block.get("markers_used") or ()))
+
+
+def original_markers(root: Path, entry: dict, source_sha: str, metadata: dict, tables: list[dict], folder: Path) -> dict:
+    """Replace the re-export's Markers table by the original export's, after re-checking it.
+
+    Rule decided for these re-exports (reexports.json): the first export of the same
+    recording has five valid markers, the same recording time and frame rate, and the frame
+    axis was verified identical. The re-exported table is kept as markers_as_exported.parquet.
+    """
+    if entry["reexport_sha256"] != source_sha:
+        raise ValueError("Marker substitution names a different re-export; review reexports.json")
+    original = root / entry["original_source_path"]
+    if original.is_symlink() or not original.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Original export escapes the source root")
+    if checksum(original) != entry["original_sha256"]:
+        raise ValueError("Original export changed since the marker substitution was reviewed")
+    book, _ = load_workbook(original)
+    try:
+        sheet = book["General Information"]
+        sheet.reset_dimensions()
+        rows = [row for row in sheet.iter_rows(values_only=True) if row and row[0] is not None]
+        info = {str(row[0]): json_value(row[1] if len(row) > 1 else None) for row in rows}
+        index = next(i for i, t in enumerate(tables) if t["source_sheet"] == "Markers")
+        exported = dict(tables[index])
+        (folder / exported["file"]).rename(folder / "markers_as_exported.parquet")
+        replacement = table_sheet(book["Markers"], folder / exported["file"], markers=True)
+    finally:
+        book.close()
+    if replacement["marker_frames"] != list(entry["frames"]):
+        raise ValueError("Original export markers differ from the reviewed substitution")
+    if (info.get("Recorded Date UTC") is None or info.get("Recorded Date UTC") != metadata.get("Recorded Date UTC")
+            or info.get("Frame Rate") != metadata.get("Frame Rate")):
+        raise ValueError("Original export is not the same recording (time or frame rate differ)")
+    tables[index] = replacement
+    exported["file"] = "markers_as_exported.parquet"
+    return {"rule": "original export markers reused: same recording time, sampling rate and frame axis",
+            "decided_on": entry.get("decided_on"), "verified_on": entry.get("verified_on"), "check": entry.get("check"),
+            "reexport_sha256": source_sha, "original_source_path": entry["original_source_path"],
+            "original_sha256": entry["original_sha256"], "frames": list(entry["frames"]),
+            "markers_as_exported": exported["marker_frames"], "as_exported_table": exported}
+
+
+def convert_record(source: Path, record: dict, target: Path, policy_id: str, source_root: Path | None = None) -> dict:
     start = time.perf_counter()
     if fingerprint(source) != (record["size_bytes"], record["mtime_ns"]):
         raise ValueError("Source changed since inventory; refresh before converting")
@@ -216,11 +265,14 @@ def convert_record(source: Path, record: dict, target: Path, policy_id: str) -> 
         previous = json.loads((target / "recording.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         previous = {}
-    if previous.get("source_id") and previous["source_id"] != record["source_id"]:
+    if (previous.get("source_id") and previous["source_id"] != record["source_id"]
+            and previous["source_id"] not in record.get("replaces_source_ids", [])):
         raise ValueError("Xsens destination belongs to a different source; use a distinct acquisition name")
     before = fingerprint(source)
     source_sha = checksum(source)
     cache = cached_descriptor(target, source_sha, policy_id) if target.exists() else None
+    if cache and override_key(cache.get("marker_override")) != override_key(record.get("marker_source")):
+        cache = None  # the reviewed marker substitution changed: rebuild
     if cache and (cache.get("source_id") != record["source_id"] or cache.get("source_path") != record["source_path"]):
         raise ValueError("Cached Xsens descriptor identity disagrees with source")
     if cache and fingerprint(source) == before:
@@ -237,7 +289,7 @@ def convert_record(source: Path, record: dict, target: Path, policy_id: str) -> 
             damaged = archive.testzip()
             if damaged:
                 raise ValueError(f"XLSX CRC error in {damaged}")
-        book = openpyxl.load_workbook(source, read_only=True, data_only=False)
+        book, repairs = load_workbook(source)
         tables, metadata = [], {}
         try:
             filenames = xsens_table_names(book.sheetnames)
@@ -253,9 +305,16 @@ def convert_record(source: Path, record: dict, target: Path, policy_id: str) -> 
         final_checksum = checksum(source)
         if fingerprint(source) != before or final_checksum != source_sha:
             raise ValueError("Source changed during conversion")
+        override = None
+        if record.get("marker_source"):
+            if source_root is None:
+                raise ValueError("A marker substitution needs the source root")
+            override = original_markers(Path(source_root), record["marker_source"], source_sha, metadata, tables, temporary)
         markers = next(t for t in tables if t["source_sheet"] == "Markers")
         marker_frames = markers["marker_frames"]
         warnings = []
+        if repairs:
+            warnings.append("source_text_repaired")
         if record["expected_marker_count"] is not None and len(marker_frames) != record["expected_marker_count"]:
             warnings.append("marker_count_mismatch")
         if any(v is None for v in marker_frames) or any(a >= b for a, b in zip(marker_frames, marker_frames[1:]) if a is not None and b is not None):
@@ -278,6 +337,10 @@ def convert_record(source: Path, record: dict, target: Path, policy_id: str) -> 
             "all_values_roundtrip_verified": True, "ready_for_features": False,
             "output_size_bytes": sum((temporary / table["file"]).stat().st_size for table in tables),
             "conversion_seconds": time.perf_counter() - start}
+        if override:
+            descriptor["marker_override"] = override
+        if repairs:
+            descriptor["source_repairs"] = repairs
         refresh_marker_selection(descriptor)
         atomic_json(temporary / "recording.json", descriptor)
         # Build a complete new directory before replacing a prior conversion.
@@ -336,7 +399,7 @@ def format_subject(subject_path: Path, *, source_ids: list[str] | None = None, l
             source = root / record["source_path"]
             if target.resolve() == subject_path or not target.resolve().is_relative_to(subject_path) or source.is_symlink() or not source.resolve().is_relative_to(root):
                 raise ValueError("Source or destination escapes its root")
-            result = convert_record(source, record, target, manifest["import_policy"]["policy_id"])
+            result = convert_record(source, record, target, manifest["import_policy"]["policy_id"], source_root=root)
             record["sha256"] = result["descriptor"]["source_sha256"]
             record["formatter_status"] = "converted"
             record["formatter_report"] = {"descriptor_path": record["normalized_target"] + "/recording.json", "warnings": result["descriptor"]["warnings"]}

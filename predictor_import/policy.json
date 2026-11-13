@@ -1,7 +1,7 @@
 {
   "policy_id": "2026-10-03-confirmed-v1",
   "active_modalities": ["xsens", "garmin", "clinical"],
-  "ignored_xsens_activities": ["mot1", "mot2"],
+  "ignored_xsens_activities": [],
   "numeric_limb_codes": {"00": "non_paretic", "0": "non_paretic", "01": "paretic", "1": "paretic"},
   "expected_task_repetitions": 4,
   "expected_task_marker_count": 5,

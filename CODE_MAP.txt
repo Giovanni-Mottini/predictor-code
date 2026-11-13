@@ -13,7 +13,8 @@ Commands: CLI_GUIDE.txt.  Line numbers are from 22 Oct 2026.
           xsens_features.py: extract_xsens()       features of one recording
           xsens_dtw.py: pair_hand_dtw()            compares the two arms
         xsens_cli.py: write_features()             tables and metadata
-        export.py: export_workbooks()              Excel, read back and checked
+        export.py: export_outputs()                Excel + CSV, read back and checked
+                                                   (OUTPUT and OUTPUT_SPEED_LENGTH)
 
 - xsens-features starts at xsens_cli.run_xsens()
 - xsens-repetitions starts at repetitions.audit_subject()
@@ -26,6 +27,9 @@ Commands: CLI_GUIDE.txt.  Line numbers are from 22 Oct 2026.
 - inspection.py                  reads headers and clinical sheets
 - adapter.py                     builds patient metadata, resolves the arm sides
 - naming.py, policy.py           name rules; conflicts go to policy.json
+- reexports.py                   re-export folders that replace named visits
+                                 (local table reexports.json)
+- xlsx_repair.py                 reads exports with a bare '&' in shared strings
 - storage_names.py, markers.py   folder names and markers
 - formatter.py                   converts Xsens and checks values are equal
 - garmin_formatter.py            converts Garmin tables
@@ -45,8 +49,12 @@ Steps:
 3. _extract_xsens()             ROM, speed, SPARC, trunk, elbow, hand paths
 4. extract_subject()            joins recordings, then fills DTW
 
-Markers: xsens.py (selected_boundaries, build_windows).
-Five markers -> four repetitions [start, end).
+Windows: xsens.py (window_kind, segment_selection, segment_windows).
+- tasks 1-4: selected_boundaries, build_windows. Five markers -> four
+  repetitions [start, end).
+- B&B, mot1, mot2: whole_window. One window = whole recording; Markers is
+  never read. processing_span.py leaves out empty edges; DTW pairs the two
+  arms' whole recordings of the same activity.
 
 Where each feature is calculated:
 - shoulder ROM (3)      rom.py: extract_rom()           from Joint Angles ZXY
@@ -54,6 +62,8 @@ Where each feature is calculated:
 - filter                rom.py: filter_angle()          shared low-pass
 - elbow ROM             elbow_rom.py                    from Segment Orientation - Quat
 - speeds (4)            xsens_features.py               from Segment Velocity
+- lever lengths (4)     xsens_features.py: speed_levers() from Segment Position
+- speeds / lever        export.py: _per_lever()         only in OUTPUT_SPEED_LENGTH
 - SPARC (4)             smoothness.py                   same velocity, own filter
 - trunk ranges (2)      xsens_features.py               from Ergonomic Joint Angles ZXY
 - hand DTW              xsens_dtw.py                    from Segment Position + T8
@@ -77,7 +87,10 @@ The elbow never uses an Euler column.
 
 5. TESTS
 
-- predictor_import/tests/             import, metadata, conversion
+- predictor_import/tests/             import, metadata, conversion, re-exports
+- feature_importance_code/tests/      ranks on synthetic tables
+- correlation_code/tests/             statistics, scales, robot pairing, the
+                                      three commands (own environment)
 - xsens_code/tests/test_rom.py        unwrapping and filters
 - test_elbow_rom.py                   quaternion elbow
 - test_processing_span.py             edge recovery
@@ -154,8 +167,33 @@ Rules and open questions: docs/GARMIN_ASSESSMENTS.txt.
 These are watch estimates, not ECG, sleep lab or calorimetry.
 
 
-7. SHARED VS LOCAL
+7. ANALYSES: IMPORTANCE AND CLINICAL CORRELATION
 
-In the repository: preparation, Xsens features, Garmin T1-T10, export.
+Both read the xsens_code features.csv tables the same way:
+feature_importance_code/tables.py: read_tables()  speeds (--speed), 14 arm features
+(hand DTW left out: it compares two arms).
+
+feature_importance_code/
+- importance.py      COMPARISONS, comparison_rows(), importance(): Random Forest
+                     Gini and held-out shuffle drop, folds by person
+- outputs.py         rank table (LaTeX) and the two figures
+- __main__.py        run: inputs, run.json with hashes and versions
+
+correlation_code/
+- scales.py          Fugl-Meyer and Box and Blocks per visit from the clinical
+                     workbook (T0 -> T1, T5+ same label; paretic hand)
+- sources.py         one value per patient visit: tasks (z-score per task),
+                     mot1/mot2 whole recordings, Xsens day of each visit
+- robot.py           MOTORE export CSVs, session on the Xsens day
+- statistics.py      between (Spearman of means), within (rmcorr, shuffle p),
+                     Holm and Benjamini-Hochberg
+- outputs.py         LaTeX table and summary text
+- __main__.py        tasks, xsens-motore, robot
+
+
+8. SHARED VS LOCAL
+
+In the repository: preparation, Xsens features, Garmin T1-T10, export,
+feature importance and clinical correlation.
 Local only: Garmin explorer, plausibility, Drive tools, old methods,
 report renderers, explorations/ (old research code, not needed).

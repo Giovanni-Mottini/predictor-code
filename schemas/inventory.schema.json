@@ -325,6 +325,25 @@
               "null"
             ]
           },
+          "export_role": {
+            "description": "Only in visits declared in predictor_import/reexports.json",
+            "enum": [
+              "original",
+              "declared_reexport"
+            ]
+          },
+          "replaces_source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "processing_quality": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "selected_archive_members": {
             "type": [
               "array",

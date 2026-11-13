@@ -118,7 +118,10 @@ def pair_hand_dtw(results: list[dict], trajectories: dict[str, dict[int, np.ndar
     for r in results:
         for row in r["feature_rows"]:
             row["dtw_hand"], row["feature_status"]["dtw_hand"], row["dtw_pair_id"] = None, "excluded", None
-        groups[tuple(r.get(k) for k in PAIR_FIELDS)].append(r)
+        key = tuple(r.get(k) for k in PAIR_FIELDS)
+        if r.get("window_kind") == "whole_recording":
+            key += (r.get("activity"),)  # B&B pairs with B&B, mot1 with mot1; task keys stay unchanged.
+        groups[key].append(r)
     pairs, cache = [], {}
     for key, group in groups.items():
         patient_group = any(r.get("limb_condition") == "paretic" for r in group)
@@ -144,11 +147,12 @@ def pair_hand_dtw(results: list[dict], trajectories: dict[str, dict[int, np.ndar
                 reason = "dtw_pair_sampling_rate_mismatch"
             for row in result["feature_rows"]:
                 rep = row["repetition"]
-                a = trajectories.get(result["source_id"], {}).get(rep)
-                b = trajectories.get(reference["source_id"], {}).get(rep) if reference else None
+                window = 1 if rep is None else rep  # a whole recording is window 1
+                a = trajectories.get(result["source_id"], {}).get(window)
+                b = trajectories.get(reference["source_id"], {}).get(window) if reference else None
                 issue = reason or ("dtw_trajectory_unavailable" if a is None or b is None else None)
-                frame_a = result.get("dtw_coordinate_frames", {}).get(str(rep), {})
-                frame_b = reference.get("dtw_coordinate_frames", {}).get(str(rep), {}) if reference else {}
+                frame_a = result.get("dtw_coordinate_frames", {}).get(str(window), {})
+                frame_b = reference.get("dtw_coordinate_frames", {}).get(str(window), {}) if reference else {}
                 if not issue and any(frame.get("status") != "computed" for frame in (frame_a, frame_b)):
                     issue = "dtw_coordinate_frame_unavailable"
                 if issue:
@@ -161,7 +165,7 @@ def pair_hand_dtw(results: list[dict], trajectories: dict[str, dict[int, np.ndar
                     pair_id = "pair_" + hashlib.sha256(repr((DTW_COORDINATE_METHOD, key, pair_key)).encode()).hexdigest()[:24]
                     if progress:
                         progress.update(f"DTW pair {len(pairs) + 1}: {result['participant_key']} "
-                                        f"{result['session_id']} task {result.get('task')} repetition {rep}; "
+                                        f"{result['session_id']} {result.get('activity') or result.get('task')} repetition {rep}; "
                                         f"{result['source_id']} vs {reference['source_id']} ({len(a)} x {len(b)} samples)")
                     try:
                         aligned_a = align_and_mirror(a, frame_a, result["anatomical_side"])
@@ -173,7 +177,7 @@ def pair_hand_dtw(results: list[dict], trajectories: dict[str, dict[int, np.ndar
                         issue = None
                     except DataContractError as exc:
                         value, status, issue = None, "excluded", exc.code
-                    evidence = {**dict(zip(PAIR_FIELDS, key)), "pair_id": pair_id, "repetition": rep,
+                    evidence = {**dict(zip(PAIR_FIELDS, key)), "activity": result.get("activity"), "pair_id": pair_id, "repetition": rep,
                                 "source_id_a": result["source_id"], "source_id_b": reference["source_id"],
                                 "source_sha256_a": result["provenance"]["source_sha256"],
                                 "source_sha256_b": reference["provenance"]["source_sha256"],

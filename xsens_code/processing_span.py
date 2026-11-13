@@ -4,13 +4,14 @@ from copy import deepcopy
 import numpy as np
 
 from shared_code.reader import DataContractError
-from .xsens import build_windows, frame_axis, selected_boundaries, source_sampling_rate
+from .xsens import WHOLE_RECORDING_POLICY_ID, frame_axis, segment_selection, segment_windows, source_sampling_rate
 
 PROCESSING_SPAN_POLICY = {
     "policy_id": "xsens-contiguous-finite-edge-span-v1",
     "scope": "full-feature extraction only; common selected input channels",
     "allowed_gaps": "leading/trailing nonfinite samples outside every repetition",
     "minimum_margin_samples": 12,
+    "whole_recordings": "the window is the contiguous finite span itself; no margin requirement",
     "interior_gaps": "no cropping; normal channel exclusion rules apply",
     "source_coordinates": "original frames, row indices and Excel rows retained",
     "imputation": False,
@@ -63,8 +64,9 @@ def extract_on_finite_span(recording, config, extractor, fields):
     if isinstance(recording, _FiniteSpanRecording):
         return extractor(recording, config)
     frames = frame_axis(recording.read_table("Joint Angles ZXY", columns=["Frame"]), "Joint Angles ZXY")
-    boundaries = selected_boundaries(recording)["boundary_frames"]
-    windows = build_windows(frames, boundaries, source_sampling_rate(recording))
+    selection = segment_selection(recording)
+    whole = selection["policy_id"] == WHOLE_RECORDING_POLICY_ID
+    windows = [] if whole else segment_windows(selection, frames, source_sampling_rate(recording))
     finite = np.ones(len(frames), dtype=bool)
     try:
         for sheet, columns in fields.items():
@@ -98,6 +100,7 @@ def extract_on_finite_span(recording, config, extractor, fields):
         "leading_frames": frames[:start], "trailing_frames": frames[end:],
         "processing_start_frame": frames[start], "processing_end_frame_inclusive": frames[end - 1],
         "source_preserved": True,
-        "treatment": "contiguous finite span filtered before original windows",
+        "treatment": ("whole-recording window limited to the contiguous finite span" if whole
+                      else "contiguous finite span filtered before original windows"),
     })
     return result

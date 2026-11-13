@@ -12,7 +12,8 @@ from shared_code.reader import DataContractError
 from .reader import XsensRecording
 from .rom import ANGLE_POLICY, ROM_COLUMNS, ROMConfig, UNIT_EVIDENCE, extract_rom, filter_angle, unwrap_angle, range_evidence
 from .smoothness import spectral_arc_length
-from .xsens import SIGNAL_SHEETS, build_windows, frame_axis, numerical_screen
+from .xsens import (SIGNAL_SHEETS, WHOLE_RECORDING_POLICY, frame_axis, numerical_screen,
+                    segment_windows, window_kind)
 from .processing_span import PROCESSING_SPAN_POLICY, extract_on_finite_span
 from .elbow_rom import ELBOW_FEATURE, SPEC as ELBOW_SPEC, extract_elbow_bending
 
@@ -24,6 +25,22 @@ FEATURE_UNITS = {**{f"vel_mean_{role}": "m/s" for role in SEGMENTS},
                  **{f"sparc_{role}": "dimensionless" for role in SEGMENTS},
                  **{f: "deg" for f in (*ROM_COLUMNS, ELBOW_FEATURE, *COMP_COLUMNS)}, "dtw_hand": "m (unnormalized accumulated distance)"}
 FEATURE_NAMES = tuple(FEATURE_UNITS)
+# Lever that moves each speed point: the export's second folder divides vel_mean_* by it.
+LEVERS = {"trunk": ("Pelvis", "T8"), "shoulder": ("Pelvis", "Shoulder"),
+          "upper_arm": ("Pelvis", "Upper Arm"), "forearm": ("Upper Arm", "Forearm")}
+LEVER_FIELDS = tuple(f"lever_{role}_m" for role in SEGMENTS)
+SPEED_LENGTH_POLICY = {
+    "policy_id": "xsens-speed-per-lever-length-v1",
+    "levers": {f"vel_mean_{role}": f"{pivot} origin to {point} origin" for role, (pivot, point) in LEVERS.items()},
+    "lever_length": "Segment Position: distance between the two segment origins in each processed frame; "
+                    "median over the frames (NaN ignored); one number per recording, in metres",
+    "normalized_speed": "vel_mean_* divided by its lever (lever lengths per second); written only by the export, "
+                        "features.csv keeps m/s; SPARC and the other features unchanged",
+    "equivalence": "per-axis filter and mean are linear and the vector norm scales with a positive constant, "
+                   "so dividing the feature equals dividing every sample by the recording's lever",
+}
+SPEED_LENGTH_POLICY_ID = SPEED_LENGTH_POLICY["policy_id"]
+METRE = {"m", "meter", "metre", "meters", "metres"}
 UNIT_POLICY_ID = "xsens-standard-kinematics-units-v1"
 KINEMATIC_UNIT_EVIDENCE = {**UNIT_EVIDENCE,
     "statement": "Manufacturer segment kinematics use global xyz position in metres, velocity in metres/second and ZXY joint angles in degrees.",
@@ -43,6 +60,9 @@ class XsensConfig:
     def method(self) -> dict:
         from .xsens_dtw import DTW_BACKEND, DTW_COORDINATE_METHOD, ORIENTATION_SHEET, ORIENTATION_COLUMNS, QUATERNION_NORM_TOLERANCE, HEADING_MIN_NORM
         return {"method_id": METHOD_ID, "feature_units": FEATURE_UNITS,
+                "windows": {"repetition": {"activities": ["task1", "task2", "task3", "task4"],
+                                           "rule": "exactly five source markers -> four repetitions [start, end); otherwise skipped"},
+                            "whole_recording": WHOLE_RECORDING_POLICY},
                 "rom": ROMConfig(self.cutoff_hz).method(),
                 "angle_preprocessing": ANGLE_POLICY,
                 "angle_preprocessing_scope": "Three shoulder and two trunk Euler channels; no elbow unwrap",
@@ -52,6 +72,7 @@ class XsensConfig:
                 "unit_policy_id": UNIT_POLICY_ID, "unit_evidence": KINEMATIC_UNIT_EVIDENCE,
                 "speed": {"construction": "filter raw xyz separately, then sqrt(sum(filtered xyz squared))",
                           "mean_filter_cutoff_hz": self.cutoff_hz, "definition": "arithmetic mean of nonnegative vector magnitude"},
+                "speed_length": SPEED_LENGTH_POLICY,
                 "sparc": {"filter_cutoff_hz": self.sparc_cutoff_hz, "padlevel": 4, "fc_hz": 10.0, "amp_threshold": 0.05,
                           "selection": "inclusive span from first to last >= threshold bin within f <= fc",
                           "source": "https://github.com/siva82kb/SPARC/blob/7deff21add7e3b6403869c8932dff31bceacb472/scripts/smoothness.py",
@@ -153,9 +174,39 @@ def checked_filter(values, channel, cutoff, fs):
     return filtered
 
 
+def speed_levers(recording, table) -> tuple[dict, dict]:
+    """Model length (m) of the lever moving each speed point: median distance between two segment origins.
+
+    Not used by any feature; the export divides vel_mean_* by it for the length-normalized folder.
+    A missing lever leaves only that normalized speed blank (warning)."""
+    side = recording.record["anatomical_side"].title()
+    units = {c["name"]: c.get("unit") for c in recording.table_descriptor("Segment Position")["columns"]}
+    channel = {"source_sheet": "Segment Position", "policy_id": SPEED_LENGTH_POLICY_ID, "status": "computed",
+               "levers_m": {}, "findings": []}
+    for role, (pivot, point) in LEVERS.items():
+        names = [f"{s if s in ('Pelvis', 'T8') else side + ' ' + s} {axis}" for s in (pivot, point) for axis in "xyz"]
+        missing = [n for n in names if n not in table.column_names]
+        conflicts = [n for n in names if units.get(n) is not None and str(units[n]).strip().casefold() not in METRE]
+        value = None
+        if not missing and not conflicts:
+            values = np.array([table[n].to_pylist() for n in names], dtype=np.float64).T
+            with np.errstate(invalid="ignore"):
+                distance = np.linalg.norm(values[:, 3:] - values[:, :3], axis=1)
+            if np.isfinite(distance).any():
+                value = float(np.nanmedian(distance))
+        if value is None or not math.isfinite(value) or value <= 0:
+            channel["status"] = "requires_review"
+            channel["findings"].append({"code": "speed_lever_unavailable", "severity": "warning", "feature": f"vel_mean_{role}",
+                                        "columns": missing or conflicts or names,
+                                        "reason": "column_missing" if missing else "unit_conflict" if conflicts else "no_finite_distance",
+                                        "treatment": "length-normalized speed left blank; m/s speed unaffected"})
+            value = None
+        channel["levers_m"][role] = value
+    return channel, {f"lever_{role}_m": value for role, value in channel["levers_m"].items()}
+
+
 def processing_channels(recording, *, include_elbow_quaternions=True):
-    if recording.record.get("task") not in {1, 2, 3, 4} or recording.record.get("representation") != "full_recording":
-        raise DataContractError("unsupported_activity", "Full-feature method covers full task1-task4 only")
+    window_kind(recording.record)  # refuses activities without a window rule
     if recording.record.get("anatomical_side") not in {"left", "right"}:
         raise DataContractError("anatomical_side_unresolved", "Full-feature method requires an anatomical side")
     side = recording.record["anatomical_side"].title()
@@ -192,7 +243,7 @@ def _extract_xsens(recording: XsensRecording, config: XsensConfig) -> XsensExtra
         if frame_axis(table, sheet) != frames:
             raise DataContractError("frame_axes_misaligned", f"{sheet} does not share the Joint Angles ZXY frame axis")
         tables[sheet] = table
-    windows = build_windows(frames, result["marker_selection"]["boundary_frames"], fs)
+    windows = segment_windows(result["marker_selection"], frames, fs)
     for row in result["feature_rows"]:
         row.pop("feature_unit", None)
         row.update({"method_id": METHOD_ID, "method_sha256": config.fingerprint(), "dtw_pair_id": None})
@@ -245,6 +296,10 @@ def _extract_xsens(recording: XsensRecording, config: XsensConfig) -> XsensExtra
                     value, status = None, "excluded"
                     own["findings"].append({"code": exc.code, "severity": "error", "repetition": window.repetition, "message": str(exc)})
                 row[f], row["feature_status"][f], row["feature_evidence"][f] = value, status, {"value": value, **evidence}
+    lever_channel, levers = speed_levers(recording, tables["Segment Position"])
+    result["channels"]["speed_levers"] = lever_channel
+    for row in result["feature_rows"]:
+        row.update(levers)
     for f, name in COMP_COLUMNS.items():
         channel, raw = selected_channel(recording, tables["Ergonomic Joint Angles ZXY"], "Ergonomic Joint Angles ZXY",
                                         [name], "deg", frames, windows)

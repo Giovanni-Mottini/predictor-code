@@ -19,6 +19,7 @@ def apply_selection(files: list[dict]) -> None:
     for file in files:
         file.update({"selection_reason": None, "selection_assumption": None,
                      "duplicate_of_source_id": None, "selected_archive_members": None})
+        file.pop("replaces_source_ids", None)
         if file["disposition"] in {"excluded", "deferred"}:
             continue
         parsed = file["parsed_name"] or {}
@@ -47,6 +48,17 @@ def apply_selection(files: list[dict]) -> None:
             key = (file["cohort"], file["subject_id"], session, parsed.get("protocol_day"), parsed["activity"], parsed["original_limb_code"])
             groups[key].append(file)
     for group in groups.values():
+        # reexports.json: in a declared visit the re-export replaces the original recording.
+        reexports = sorted((f for f in group if f.get("export_role") == "declared_reexport"), key=lambda f: f["source_path"])
+        if reexports and len(group) > 1:
+            chosen = reexports[0]
+            chosen["selection_reason"] = "declared_reexport_replaces_original"
+            chosen["replaces_source_ids"] = sorted(f["source_id"] for f in group if f is not chosen)
+            for other in group:
+                if other is not chosen:
+                    other.update({"disposition": "excluded", "selection_reason": "superseded_by_declared_reexport",
+                                  "duplicate_of_source_id": chosen["source_id"]})
+            continue
         full = sorted((f for f in group if f["parsed_name"]["representation"] == "full_recording"), key=lambda f: f["source_path"])
         if full:
             chosen = full[0]
@@ -106,3 +118,21 @@ def apply_selection(files: list[dict]) -> None:
     for file in files:
         if file["artifact_kind"] == "garmin_archive" and file["disposition"] == "mapped" and not file["selected_archive_members"]:
             file.update({"disposition": "excluded", "selection_reason": "archive_has_no_selected_tables"})
+
+
+def exclude_hd_without_reexport(files: list[dict], root: Path) -> None:
+    """Normal only in declared visits: an original left without a replacement must not be HD.
+
+    Only originals of declared visits (reexports.json) are read, so other files cost nothing.
+    An unreadable quality is flagged and the recording kept, as for any other source.
+    """
+    from .xlsx_repair import processing_quality
+
+    for file in files:
+        if file.get("export_role") != "original" or file["disposition"] != "mapped" or file["artifact_kind"] != "xsens_workbook":
+            continue
+        file["processing_quality"] = processing_quality(Path(root) / file["source_path"])
+        if file["processing_quality"] == "HD":
+            file.update({"disposition": "excluded", "selection_reason": "hd_without_normal_reexport"})
+        elif file["processing_quality"] is None:
+            file["issues"].append("processing_quality_unreadable")

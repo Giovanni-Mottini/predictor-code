@@ -221,6 +221,30 @@
     "conversion_seconds": {
       "type": "number",
       "minimum": 0
+    },
+    "marker_override": {
+      "description": "Markers taken from the original export (predictor_import/reexports.json); the exported table is kept as markers_as_exported.parquet",
+      "type": "object",
+      "required": [
+        "rule",
+        "reexport_sha256",
+        "original_source_path",
+        "original_sha256",
+        "frames",
+        "markers_as_exported"
+      ]
+    },
+    "source_repairs": {
+      "description": "In-memory repairs needed to read the source; the source file is unchanged",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "part",
+          "rule",
+          "replacements"
+        ]
+      }
     }
   },
   "required": [

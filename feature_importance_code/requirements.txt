@@ -1,0 +1,10 @@
+# Pinned to the versions that produced the paper's ranks (13 Nov 2026), so they can be reproduced.
+# Python 3.14. scikit-learn sorts class names and draws its random numbers by version: other
+# versions can move the values.
+numpy==2.5.4
+pandas==3.1.1
+scipy==1.18.1
+scikit-learn==1.9.1
+joblib==1.6.0
+matplotlib==3.11.2
+pytest==9.2.0
