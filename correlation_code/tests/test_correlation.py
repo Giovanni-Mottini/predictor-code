@@ -14,7 +14,7 @@ import pytest
 from correlation_code.__main__ import main
 from correlation_code.robot import ROWS, export_files, read_export, read_sessions, robot_visits
 from correlation_code.scales import plain_number, read_scales, sided, workbook_of, workbook_visit
-from correlation_code.sources import pair, task_visits, visit_dates, whole_recording_visits
+from correlation_code.sources import pair, pooled_whole_recording_visits, task_visits, visit_dates, whole_recording_visits
 from correlation_code.statistics import benjamini_hochberg, between, correlate, holm, rmcorr, shuffle_within
 from feature_importance_code.tables import ARM_FEATURES, read_tables
 from feature_importance_code.tests.synthetic import task_table, whole_rows, write_run
@@ -152,6 +152,19 @@ def test_whole_recordings_paretic_only_and_xsens_dates(tmp_path):
     assert list(pair(scales, visits)["patient"]) == ["FG92", "FG91"]           # scale order, inner join
 
 
+def test_pooled_exercises_z_score_each_exercise_and_need_both(tmp_path):
+    frame = pd.concat([whole_rows(PEOPLE, "mot1", visits=("T1", "T5")), whole_rows(PEOPLE, "mot2", visits=("T1", "T5"), seed=3)])
+    keep = ~((frame["activity"] == "mot2") & (frame["participant_key"] == "PAZIENTI/FG91") & (frame["timepoint"] == "T5"))
+    table = read_tables([write_run(tmp_path, frame[keep])], "mps")
+    pooled = pooled_whole_recording_visits(table).set_index(["patient", "visit"])
+    assert len(pooled) == len(PEOPLE) * 2 and pooled.loc[("FG91", "T5"), "n_exercises"] == 1
+    assert pooled.loc[("FG91", "T5"), list(ARM_FEATURES)].isna().all()
+    f = "sparc_forearm"
+    one, two = (whole_recording_visits(table, a).set_index(["patient", "visit"])[f] for a in ("mot1", "mot2"))
+    z = lambda s: (s - s.mean()) / s.std()
+    assert pooled.loc[("FG93", "T1"), f] == pytest.approx((z(one)[("FG93", "T1")] + z(two)[("FG93", "T1")]) / 2)
+
+
 # --- robot exports ------------------------------------------------------------------------------------------
 
 def export_csv(folder: Path, kind: str, day: str, time="10-30-00-000", overall=50.0, settings=(2, 4, 2)) -> Path:
@@ -235,7 +248,7 @@ def test_three_studies_write_their_tables_and_refuse_a_used_folder(study, capsys
     tasks = pd.read_csv(tmp / "out/tasks/tasks_results.csv")
     assert len(tasks) == 2 * len(ARM_FEATURES) and tasks["visits"].max() == 15 and tasks["patients"].max() == 5
     assert "Normalized forearm speed" in set(tasks["label"])
-    for name in ("mot1", "mot2"):
+    for name in ("mot1", "mot2", "mot_pooled"):
         assert len(pd.read_csv(tmp / f"out/motore/{name}_visits.csv")) == 15
     pairing = pd.read_csv(tmp / "out/robot/robot_evaluation_pairing.csv")
     assert pairing["status"].eq("used").sum() == 15

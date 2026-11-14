@@ -287,7 +287,8 @@ project root (P=.venv-analysis/bin/python, RUN = a pipeline work directory):
                 (--volunteers <tables> for healthy vs simulated)
 - correlation   $P -m correlation_code tasks --features RUN
                 --workbooks "Dati PREDICTOR/PAZIENTI" --speed length --output <new>
-                xsens-motore: same options (mot1, mot2 recordings)
+                xsens-motore: same options (mot1, mot2 recordings, each
+                alone and pooled)
                 robot: --exports "Dati PREDICTOR/PAZIENTI" instead of --speed
 
 Output folders must be new; results name patients, keep them under reports/.

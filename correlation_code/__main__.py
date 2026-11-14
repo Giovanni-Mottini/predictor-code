@@ -67,7 +67,8 @@ def main(argv=None) -> int:
     from .outputs import correlation_table, summary_block
     from .robot import KINDS, SCORES, read_sessions, robot_visits
     from .scales import read_scales, workbook_of
-    from .sources import MOTORE_ACTIVITIES, pair, task_visits, visit_dates, whole_recording_visits
+    from .sources import (MOTORE_ACTIVITIES, pair, pooled_whole_recording_visits, task_visits, visit_dates,
+                          whole_recording_visits)
     from .statistics import correlate
 
     if args.output.exists() and any(args.output.iterdir()):
@@ -94,6 +95,10 @@ def main(argv=None) -> int:
                 families.append((activity, f"Xsens {activity} ({kind}), paretic arm",
                                  f"Correlation of the paretic-arm features during the robot {kind} ({activity}) with the clinical scales",
                                  f"tab:correlations-{activity}", whole_recording_visits(table, activity), names, order, [], {}))
+            families.append(("mot_pooled", "Xsens mot1 + mot2 pooled (Evaluation and TraIns), paretic arm",
+                             "Correlation of the paretic-arm features during the robot exercises (Evaluation and TraIns "
+                             "pooled) with the clinical scales", "tab:correlations-mot-pooled",
+                             pooled_whole_recording_visits(table), names, order, [], {}))
     else:
         sessions = read_sessions(args.exports)
         dates = visit_dates(table)

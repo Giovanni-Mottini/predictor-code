@@ -16,7 +16,13 @@ THREE STUDIES (one command each)
                  (at least 2), z-scored per task, then the mean over tasks (at
                  least 2)
 - xsens-motore   Xsens during the robot sessions: mot1 = Evaluation, mot2 =
-                 TraIns; one whole recording per visit
+                 TraIns; one whole recording per visit. Three tables: each
+                 exercise alone, and both pooled as the tasks are (z-score per
+                 exercise, then the mean; both exercises needed). The file
+                 names do not say which exercise is which: the mapping comes
+                 from start times (Nov 2026: all four recordings of a visit
+                 match a session of that type within 90 s in 57 of 67 visits,
+                 robot clock about 13 min behind Xsens; swapped, 1 of 67)
 - robot          the robot's own scores (MOTORE fgXX_export CSVs) of the session
                  on the Xsens day of each visit
 
@@ -45,7 +51,7 @@ The output folder must be new. Results hold patient codes and scores: keep
 them under reports/ (git-ignored).
 
 
-OUTPUT (per table: tasks, mot1, mot2, robot_evaluation, robot_trains)
+OUTPUT (per table: tasks, mot1, mot2, mot_pooled, robot_evaluation, robot_trains)
 
 - <table>_visits.csv     the paired visits: scales and values
 - <table>_results.csv    one row per scale and feature, both levels

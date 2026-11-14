@@ -183,7 +183,8 @@ correlation_code/
 - scales.py          Fugl-Meyer and Box and Blocks per visit from the clinical
                      workbook (T0 -> T1, T5+ same label; paretic hand)
 - sources.py         one value per patient visit: tasks (z-score per task),
-                     mot1/mot2 whole recordings, Xsens day of each visit
+                     mot1/mot2 whole recordings, each alone and pooled
+                     (z-score per exercise), Xsens day of each visit
 - robot.py           MOTORE export CSVs, session on the Xsens day
 - statistics.py      between (Spearman of means), within (rmcorr, shuffle p),
                      Holm and Benjamini-Hochberg
