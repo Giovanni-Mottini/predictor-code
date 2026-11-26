@@ -1,0 +1,53 @@
+GARMIN HANDOFF DATES - PATIENTS (26 Nov 2026)
+
+The day each patient got the Garmin watch.
+Holds real patient codes and dates.
+
+
+1. HANDOFF DATES
+
+- FG02   22 Nov 2025   see note 1 in section 3
+- FG04    7 Feb 2026   see note 2 in section 3
+- FG05    7 Feb 2026
+- FG06   23 Feb 2026
+- FG07   24 Apr 2026
+- FG08   20 May 2026
+- FG09   12 Jun 2026
+- FG10   21 Aug 2026
+- FG11   25 Aug 2026
+- FG12   11 Sep 2026   not in the workbook, Fitrockr pairing day only
+
+
+2. WHERE THE DATES COME FROM
+
+- workbook     clinical workbook of each patient, sheet TIMELINE_01
+               (FGxx_VAL.xlsx; FGxx.xlsx for FG07 and FG09-FG12, in
+               Dati PREDICTOR/PAZIENTI/FGxx). The date is in one of:
+               - the "Garmin" column of the header row
+                 ("Garmin Pairing Date" for FG02)
+               - the "Garmin" row under the scales
+               - a note "Garmin posizionato il ..." (FG10, FG11)
+- check        "Join Code Date" in user.csv of the Fitrockr export: the day
+               the watch was linked to our Fitrockr account.
+               It is the same day as the workbook for all 9 patients.
+- first worn   first day with wear in hourly-health-log.csv
+               ("Wearing Time (s)")
+
+
+3. NOTES
+
+1. FG02: the workbook has two dates. The header says 22 Nov 2025, the
+   "Garmin" row says 18 Nov 2025 (the T0 day). Fitrockr pairing and first
+   wear are both 22 Nov, so 22 Nov is kept.
+2. FG04: handed over on 7 Feb, worn 1 h that day, nothing 8-10 Feb, then
+   worn every day from 11 Feb.
+3. FG12: no Garmin date in the workbook (no column, no row, no note).
+   Ask the clinic to add it.
+4. FG05, FG06, FG09, FG11, FG12: our exports start later than the handoff,
+   on a day already fully worn, so the first days are missing:
+   - FG05   export starts 10 Feb
+   - FG06   export starts 27 Feb
+   - FG09   export starts 22 Jun
+   - FG11   export starts  7 Sep
+   - FG12   export starts  6 Oct
+   Re-export them from the handoff day before Fitrockr ends on 11 Dec 2026.
