@@ -186,21 +186,37 @@ def test_local_dates_half_open_means_separate_calories_and_provenance(factory):
     assert not pipeline.report()["provenance"][0]["raw_source_rechecked"]
 
 
-def test_high_calories_preserved_reviewed_and_not_normalized(factory):
+def test_high_calories_excluded_with_their_met_quarter(factory):
+    # 600 kcal in 5 minutes is above 25 kcal/min x 5 min = 125 kcal (decided 25 Nov 2026)
     pipeline = run(factory())
+    h = pipeline.prepare("health")
+    assert h.data.loc[4, "total_calories_kcal"] == 600  # the source value is kept, only marked
+    assert not h.eligible.loc[4, "total_calories_kcal"]
+    assert h.eligible.loc[4, "active_calories_kcal"]  # 1 kcal is plausible: each field on its own
+    assert not h.eligible.loc[4, "met_avg"]  # MET = total / resting, so its quarter goes too
+    assert h.eligible.loc[:3, "total_calories_kcal"].sum() == 3  # row 2 is unworn
     frame, norm, _ = build_windows(pipeline)
-    assert pipeline.prepare("health").data.loc[4, "total_calories_kcal"] == 600
+    assert pd.isna(frame.loc[1, "total_calories_kcal_mean"])
+    assert not frame.loc[1, "total_calories_kcal_mean_review"]
+    assert frame.loc[0, "total_calories_kcal_mean"] == pytest.approx((10 + 20 + 40) / 3)
+    flag = next(f for f in h.findings if f["code"] == "high_calorie_rate")
+    assert flag["severity"] == "exclude" and flag["count"] == 1
+    assert flag["examples"][0]["source_csv_record"] == 5
+    assert flag["examples"][0]["raw_value"] == "600"
+    assert pipeline.config.method()["config"]["exclude_high_calorie_rate"] is True
+
+
+def test_keep_high_calories_restores_review_only(factory):
+    config = GarminConfig(exclude_high_calorie_rate=False)
+    pipeline = GarminSubject(factory(), "2030-04-09", "2030-04-10", config)
+    frame, norm, _ = build_windows(pipeline)
+    assert pipeline.prepare("health").eligible.loc[4, ["total_calories_kcal", "met_avg"]].all()
     assert frame.loc[1, "total_calories_kcal_mean"] == 600
     assert frame.loc[1, "total_calories_kcal_mean_review"]
     assert pd.isna(norm.loc[1, "total_calories_kcal_mean"])
     assert norm.loc[0, "total_calories_kcal_mean"] == 0
-    flag = next(
-        f
-        for f in pipeline.prepare("health").findings
-        if f["code"] == "high_calorie_rate"
-    )
-    assert flag["examples"][0]["source_csv_record"] == 5
-    assert flag["examples"][0]["raw_value"] == "600"
+    flag = next(f for f in pipeline.prepare("health").findings if f["code"] == "high_calorie_rate")
+    assert flag["severity"] == "review"
 
 
 def test_coverage_partial_wearing_and_empty_window_never_assumed_100(factory):
@@ -398,7 +414,7 @@ def test_batch_outputs_hashes_and_protected_inputs(factory, tmp_path):
         run_windows([pipeline], pipeline.reader.root / "features")
     prepared, qc = export_preparation([pipeline], "health", tmp_path / "prep")
     assert len(prepared) == 5 and prepared.loc[4, "total_calories_kcal"] == 600
-    assert prepared.loc[4, "total_calories_kcal__review"]
+    assert not prepared.loc[4, "total_calories_kcal__eligible"]
 
 
 def test_cohort_qualified_ranges_and_duplicate_subjects_are_enforced(factory, tmp_path):
@@ -424,15 +440,19 @@ def test_cohort_qualified_ranges_and_duplicate_subjects_are_enforced(factory, tm
                 "2030-04-10",
                 "--output",
                 str(tmp_path / "cli"),
+                "--keep-high-calories",
             ]
         )
-        == 1
+        == 1  # the kept 600-kcal value needs review
     )
+    assert main(["garmin-windows", str(subject), "--start", "2030-04-09", "--end-exclusive", "2030-04-10",
+                 "--output", str(tmp_path / "cli-default")]) == 0  # excluded by default: nothing to review
 
 
 def test_window_cli_progress_preserves_features_and_clean_json(factory, tmp_path, capsys):
     subject = factory()
-    args = ["garmin-windows", str(subject), "--start", "2030-04-09", "--end-exclusive", "2030-04-10"]
+    args = ["garmin-windows", str(subject), "--start", "2030-04-09", "--end-exclusive", "2030-04-10",
+            "--keep-high-calories"]  # keeps a value to review, so the exit status is 1
     output = tmp_path / "with-progress"
     assert main([*args, "--output", str(output)]) == 1
     captured = capsys.readouterr()
@@ -545,7 +565,8 @@ def test_day_without_resting_energy_keeps_active_but_not_total(factory):
 
     h = run(factory(health_change=change)).prepare("health")
     assert not h.eligible["total_calories_kcal"].any()
-    assert h.eligible.loc[[0, 1, 3, 4], "active_calories_kcal"].all()
+    assert h.eligible.loc[[0, 1, 3], "active_calories_kcal"].all()
+    assert not h.eligible.loc[4, "active_calories_kcal"]  # 600 kcal in 5 min: above the rate limit
 
 
 def test_second_beat_stream_excludes_beats_and_stress_but_not_health(factory):

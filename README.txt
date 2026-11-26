@@ -94,6 +94,16 @@ Every Xsens recording goes through this code; no other feature code is used.
 - 2 trunk ranges     max - min of filtered, unwrapped ergonomic angles
 - 1 hand DTW         distance between the two hands' trajectories
 
+The four tasks (patient seated in front of a table, non-paretic arm
+first, then the paretic one; a pause between repetitions):
+- task 1             forward reaching: stretch the arm forward to point at
+                     the object on the table (shoulder, elbow)
+- task 2             hand to mouth (shoulder, elbow)
+- task 3             combing the hair: hand to the top and back of the head
+                     (shoulder, elbow, wrist)
+- task 4             grasping a glass: reach it on the table, lift it for
+                     3 s, put it down (shoulder, elbow, wrist, fingers)
+
 Which part of the recording:
 - tasks 1-4          five markers = four repetitions, one row per repetition.
                      Any other marker count: recording skipped, never repaired.

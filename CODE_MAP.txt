@@ -52,6 +52,9 @@ Steps:
 Windows: xsens.py (window_kind, segment_selection, segment_windows).
 - tasks 1-4: selected_boundaries, build_windows. Five markers -> four
   repetitions [start, end).
+- xsens-features --edited-markers: edited_marker_selection,
+  build_edited_windows. Repetitions saved by marker_editor (any number,
+  also start/end pairs) for the recordings that have a file.
 - B&B, mot1, mot2: whole_window. One window = whole recording; Markers is
   never read. processing_span.py leaves out empty edges; DTW pairs the two
   arms' whole recordings of the same activity.
@@ -115,8 +118,8 @@ Tests check the code, not clinical validity.
           t1_window()        T1 from first wholly worn day   99
         extract_assessment() read, check, 6-h blocks, wear   235
           garmin_reader.py: read_period()                    100
-          garmin.py: GarminSubject.prepare()  rules          309
-          garmin.py: build_windows()          block values   766
+          garmin.py: GarminSubject.prepare()  rules          312
+          garmin.py: build_windows()          block values   776
         summarize()          equal-day mean, >= 3 days       191
         assessment_export.py: export_assessment()  Excel     67
 
@@ -131,31 +134,32 @@ The data (Fitrockr exports of a Garmin vivoactive 5):
 Enhanced BBI is never read (it adds invented beats in the gaps).
 
 What becomes blank (the source files are never edited), garmin.py:
-- not worn                               455
-- broken 5-min intervals                 470
-- day without resting energy: calories   519
-- record never arrived: calories, steps  524
-- MET = 0 (means "not computed")         533
-- MET recomputed where calories are ok   539
-- steps never recorded                   554
-- stress without heart rate, or > 100    585, 602
-- respiration with bad status            620, 625
-- resting HR <= 0, bad sleep sessions    677, 664
+- not worn                               458
+- broken 5-min intervals                 473
+- calories above 25 kcal/min, and the MET of their 15-min quarter   506
+- day without resting energy: calories   524
+- record never arrived: calories, steps  529
+- MET = 0 (means "not computed")         541
+- MET recomputed where calories are ok   547
+- steps never recorded                   564
+- stress without heart rate, or > 100    595, 612
+- respiration with bad status            630, 635
+- resting HR <= 0, bad sleep sessions    687, 674
 
 Optional beat filters, OFF by default:
-- 230-1550 ms, worn, MET < 3             629
-- second wearer (more beats than time)   243, 693
-- > 20% from the local median            700
+- 230-1550 ms, worn, MET < 3             639
+- second wearer (more beats than time)   246, 703
+- > 20% from the local median            710
 
 Features, per 6-hour block:
 - RMSSD, SDNN       garmin_hrv_notebook.py: time_domain()     31
 - SD2/SD1           garmin_hrv_notebook.py: block()           114
 - LF/HF             garmin_hrv_notebook.py: frequency()       87
 - sample entropy    garmin_hrv_notebook.py: sample_entropy()  69
-- steps, MET, kcal, breaths, stress   mean of the block       garmin.py 789
-- resting HR        Garmin daily value                        garmin.py 893
-- sleep             merge < 2 h, longest per night            garmin.py 957
-- Fitrockr HRV      mean of Fitrockr 5-min values             garmin.py 565
+- steps, MET, kcal, breaths, stress   mean of the block       garmin.py 799
+- resting HR        Garmin daily value                        garmin.py 903
+- sleep             merge < 2 h, longest per night            garmin.py 967
+- Fitrockr HRV      mean of Fitrockr 5-min values             garmin.py 575
 
 From blocks to one T value (assessments.py):
 - window     Xsens day +/- 2, or the given days      112, 51

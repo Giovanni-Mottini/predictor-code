@@ -69,6 +69,11 @@ Options:
 - --anatomical-side X    left or right
 - --cutoff-hz 6          signal filter (default 6 Hz)
 - --sparc-cutoff-hz 15   smoothness filter (default 15 Hz)
+- --edited-markers       use the repetitions saved in the marker editor
+                         (marker_editor/markers, or give another folder).
+                         Any number of repetitions, also start/end markers
+                         (pauses left out). Recordings never saved in the
+                         editor keep the five-marker rule.
 - more patients          list more folders after the first one
 
 Notes:
@@ -77,6 +82,10 @@ Notes:
 - DTW also needs the T8 orientation data; without it only DTW is blank.
 - B&B, mot1, mot2: no markers needed; one row per recording, column
   window_kind = whole_recording; DTW compares the two arms' whole recordings.
+- --edited-markers: rows carry marker_policy_id = xsens-edited-markers-v1.
+  DTW pairs repetition k of one arm with repetition k of the other; a
+  repetition without a partner has no DTW. The Excel export (OUTPUT_Xsens)
+  still wants four repetitions and refuses these rows: use features.csv.
 - Out of scope: single exported repetitions, the robot files in MOTORE/.
 
 Check repetitions only (no features):
@@ -155,7 +164,8 @@ The file must list exactly the patients in the command.
 
 Garmin options (garmin-windows, garmin-assessments, garmin-clinical):
 - --window-minutes 30            row size; must divide 360 (assessments: always 360)
-- --calorie-rate 25              high-calorie warning, kcal/min
+- --calorie-rate 25              calories above this rate (kcal/min x interval) are excluded
+- --keep-high-calories          keep them for review instead (method before 25 Nov 2026)
 - --max-selected-rows 2000000    row limit
 - --hrv-method notebook          default: first-wave method, one value per block
 - --hrv-method segments          alternative: gap-free 5-minute epochs

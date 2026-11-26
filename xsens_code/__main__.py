@@ -36,6 +36,11 @@ def main(argv=None) -> int:
         command.add_argument("--timepoint", action="append")
         command.add_argument("--task", type=int, action="append", choices=[1, 2, 3, 4])
         command.add_argument("--no-progress", action="store_true")
+    features.add_argument("--edited-markers", type=Path, nargs="?", const=Path("marker_editor/markers"), default=None,
+                          metavar="FOLDER",
+                          help="Task recordings saved in the marker editor take their repetitions from its files "
+                               "(any number of repetitions, also start/end markers without the pauses); the other "
+                               "recordings keep the five-marker rule. Default folder: marker_editor/markers")
     for command in (features, pipeline):
         command.add_argument("--activity", action="append", choices=list(ACTIVITIES),
                              help="Only this activity; repeatable. Default: tasks 1-4, box_and_blocks, mot1 and mot2")

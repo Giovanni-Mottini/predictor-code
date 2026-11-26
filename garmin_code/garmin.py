@@ -20,7 +20,7 @@ from .garmin_reader import check_snapshot, open_export
 from .garmin_hrv import ADVANCED_HRV, EPOCH_COLUMNS, advanced_block, continuity_mask, method as hrv_method
 from .garmin_hrv_notebook import block as notebook_block, method as notebook_method
 
-METHOD_ID = "garmin-local-windows-explicit-bbi-v4"
+METHOD_ID = "garmin-local-windows-explicit-bbi-v5"  # v5: calories above the rate limit are excluded (25 Nov 2026)
 STREAM_FILES = {
     "health": "detailed-health-log.csv",
     "stress": "stress.csv",
@@ -76,6 +76,9 @@ DEFERRED_HRV = ()
 class GarminConfig:
     window_minutes: int = 30
     calorie_rate_kcal_min: float = 25.0
+    # Decided 25 Nov 2026: calories above calorie_rate_kcal_min x duration are excluded.
+    # False restores the earlier review-only behaviour (values kept, left out of normalization).
+    exclude_high_calorie_rate: bool = True
     bbi_min_ms: float = 230.0
     bbi_max_ms: float = 1550.0
     max_pair_gap_s: float = 5.0
@@ -136,7 +139,7 @@ class GarminConfig:
             "bbi_screens": "when bbi_screens: 230-1550 ms range, zero-wear intervals and MET>=3 exclude beats; otherwise every timestamp-valid raw beat is used",
             "advanced_hrv": hrv_method(),
             "bbi_range_origin": "inherited 04_bbi.ipynb, configurable screening range, not clinical validation",
-            "calorie_rule": "separate source fields; no correction; negative excluded; high rate retained for review, omitted from normalization",
+            "calorie_rule": "separate source fields; no correction; negative excluded; above calorie_rate_kcal_min x interval minutes excluded per field (exclude_high_calorie_rate; False keeps them for review, omitted from normalization); an excluded total also excludes MET in its 15-min quarter",
             "calorie_threshold_origin": "inherited exploration script, heuristic, not validated physiological limit",
             "coverage_rule": "observed valid health interval seconds / window seconds; missing wear remains null",
             "stream_screens": {
@@ -495,16 +498,18 @@ class GarminSubject:
                     ]
                 )
             flag("overlapping_health_intervals", data.index.isin(bad))
+            none = pd.Series(False, index=data.index)
+            high_rate = {}
             for col in ("calories_kcal", "total_calories_kcal", "active_calories_kcal"):
                 if col in values:
+                    high_rate[col] = values[col].gt(self.config.calorie_rate_kcal_min * duration / 60)
                     flag(
                         "high_calorie_rate",
-                        values[col].gt(
-                            self.config.calorie_rate_kcal_min * duration / 60
-                        ),
+                        high_rate[col],
                         col,
-                        "review",
-                        f"source kcal > {self.config.calorie_rate_kcal_min:g} * UTC duration minutes; exploratory",
+                        "exclude" if self.config.exclude_high_calorie_rate else "review",
+                        f"source kcal > {self.config.calorie_rate_kcal_min:g} * UTC duration minutes; "
+                        + ("excluded" if self.config.exclude_high_calorie_rate else "kept for review"),
                     )
             # Fitrockr writes 0 where it could not compute a value. Garmin's own
             # dailies carry the same gaps, so they are upstream, not ours.
@@ -527,6 +532,9 @@ class GarminSubject:
                 flag("total_not_above_active", worn & ~no_resting_day & total.gt(0) & total.le(active),
                      "total_calories_kcal", "info", "worn total <= active on a day with resting energy; kept")
                 calorie_gap = no_resting_day | dropped
+                if self.config.exclude_high_calorie_rate:
+                    # MET is total / resting energy: an impossible total makes its quarter's MET unusable too.
+                    calorie_gap = calorie_gap | (worn & high_rate.get("total_calories_kcal", none))
             if "met_avg" in values:
                 quarter = data["_local"].dt.floor("15min")
                 gap_quarter = quarter.map(calorie_gap.groupby(quarter).any()).fillna(False).astype(bool)
@@ -539,6 +547,8 @@ class GarminSubject:
                 data["_met_recomputed"] = False
                 if {"total_calories_kcal", "active_calories_kcal"} <= set(values):
                     good = worn & ~no_resting_day & total.gt(active)
+                    if self.config.exclude_high_calorie_rate:
+                        good = good & ~high_rate.get("total_calories_kcal", none)
                     parts = pd.DataFrame({"good": good, "total": total.where(good), "resting": (total - active).where(good)})
                     q = parts.groupby(quarter).agg(rows=("good", "size"), good=("good", "sum"),
                                                     total=("total", "sum"), resting=("resting", "sum"))

@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
+import json
 import math
+from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -31,6 +34,69 @@ WHOLE_RECORDING_POLICY = {
 WHOLE_RECORDING_POLICY_ID = WHOLE_RECORDING_POLICY["policy_id"]
 
 
+# Optional (xsens-features --edited-markers): repetitions saved by hand in the marker editor.
+EDITED_MARKER_FORMAT = "predictor-marker-edit-v2"
+EDITED_MARKER_POLICY = {
+    "policy_id": "xsens-edited-markers-v1",
+    "scope": "full task1-task4 recordings that have a file saved by marker_editor; the others keep the five-marker rule",
+    "file": "<directory>/<cohort>/<subject>/<visit>/<recording>.json, format " + EDITED_MARKER_FORMAT,
+    "windows": "the saved repetitions [start_frame, end_frame_exclusive), any number of them; "
+               "mode 'boundaries' = marker k to marker k+1, mode 'start_end' = one start and one end marker "
+               "per repetition (pauses belong to no repetition)",
+    "checks": "source_sha256 of the file equals the recording's; windows in time order, not overlapping, on observed frames",
+    "source_markers": "not used and not changed",
+}
+EDITED_MARKER_POLICY_ID = EDITED_MARKER_POLICY["policy_id"]
+
+
+def edited_marker_selection(directory: Path, recording: XsensRecording) -> dict | None:
+    """Selection from the marker editor's file of this recording; None when it has no file."""
+    folder = recording.descriptor_path.parent            # <cohort>/<subject>/xsens/<visit>/<recording>
+    parts = folder.parts
+    if len(parts) < 5 or parts[-3] != "xsens":
+        raise DataContractError("edited_markers_path_unknown", f"Cannot name the editor file of {folder}")
+    path = Path(directory) / parts[-5] / parts[-4] / parts[-2] / (parts[-1] + ".json")
+    if not path.is_file():
+        return None
+    payload = path.read_bytes()
+    try:
+        saved = json.loads(payload)
+        windows = [[r["start_frame"], r["end_frame_exclusive"]] for r in saved["repetitions"]]
+        mode, markers = saved["repetition_mode"], saved["marker_frames"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise DataContractError("edited_markers_unreadable", f"{path}: {exc}") from exc
+    if saved.get("format") != EDITED_MARKER_FORMAT:
+        raise DataContractError("edited_markers_format", f"{path}: expected format {EDITED_MARKER_FORMAT}")
+    if saved.get("source_sha256") != recording.descriptor.get("source_sha256"):
+        raise DataContractError("edited_markers_stale", f"{path} was saved for another version of the source file; save it again in the editor")
+    if not windows:
+        raise DataContractError("edited_markers_no_repetitions", f"{path} holds no repetition")
+    return {"policy_id": EDITED_MARKER_POLICY_ID, "rule_applied": False, "temporary": False,
+            "source_marker_count": recording.descriptor.get("observed_marker_count"),
+            "repetition_mode": mode, "marker_frames": markers, "windows": windows, "boundary_frames": None,
+            "edited_file": str(path), "edited_file_sha256": hashlib.sha256(payload).hexdigest(),
+            "saved_at": saved.get("saved_at"), "valid_for_expected_repetitions": None}
+
+
+def build_edited_windows(frames: list[int], windows: list[list[int]], fs: float) -> list["RepetitionWindow"]:
+    """Any number of [start, end) windows on a checked, contiguous frame axis; an end may be last_frame + 1."""
+    if (isinstance(fs, bool) or not isinstance(fs, (int, float)) or not math.isfinite(fs) or fs <= 0):
+        raise DataContractError("sampling_rate_invalid", "A finite positive source sampling rate is required")
+    if not windows or any(len(w) != 2 or any(type(f) is not int for f in w) for w in windows):
+        raise DataContractError("boundary_count_or_type", "Edited repetitions need integer [start, end) pairs")
+    if any(a >= b for a, b in windows) or any(w[1] > nxt[0] for w, nxt in zip(windows, windows[1:])):
+        raise DataContractError("boundary_order_invalid", "Edited repetitions must be in time order and must not overlap")
+    rows = {frame: row for row, frame in enumerate(frames)}
+    result = []
+    for rep, (a, b) in enumerate(windows, 1):
+        end = rows.get(b, len(frames) if frames and b == frames[-1] + 1 else None)
+        if a not in rows or end is None:
+            raise DataContractError("boundary_out_of_bounds", f"Edited repetition {rep} [{a}, {b}) is not on observed frames")
+        start, count = rows[a], end - rows[a]
+        result.append(RepetitionWindow(rep, a, b, start, end, count, frames[start], frames[end - 1], count / fs, (count - 1) / fs))
+    return result
+
+
 def window_kind(record: dict) -> str:
     """'repetition' for full task1-task4 recordings, 'whole_recording' for B&B, mot1 and mot2."""
     if record.get("representation") == "full_recording":
@@ -53,12 +119,17 @@ def segment_selection(recording: XsensRecording) -> dict:
     """Five checked markers for tasks 1-4; no marker check for whole recordings."""
     if window_kind(recording.record) == "whole_recording":
         return whole_recording_selection(recording)
+    edited = getattr(recording, "edited_markers", None)
+    if edited is not None:
+        return edited
     return selected_boundaries(recording)
 
 
 def segment_windows(selection: dict, frames: list[int], fs: float) -> list["RepetitionWindow"]:
     if selection["policy_id"] == WHOLE_RECORDING_POLICY_ID:
         return [whole_window(frames, fs)]
+    if selection["policy_id"] == EDITED_MARKER_POLICY_ID:
+        return build_edited_windows(frames, selection["windows"], fs)
     return build_windows(frames, selection["boundary_frames"], fs)
 
 

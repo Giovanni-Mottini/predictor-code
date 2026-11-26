@@ -105,7 +105,7 @@ def export_assessment(destination, tables, plans, reports, clinical_issues, meth
         ("window_override", "An explicit start-end window (Anchors/window_json) replaces Xsens date +/-2 and the T1 rule for that T", None),
         ("advisory_review_days", "Count of contributing daily values carrying existing review warnings; these values remain in this exploratory output", "days"),
         ("Daily", "RHR and sleep counted once per date; daily values repeat on the 20-row view for context, not independent observations", None),
-        ("calories", "Total Calories (resting + active), mean per eligible source interval. Existing high-rate warnings remain; upper-limit decision deferred", "kcal per source interval"),
+        ("calories", "Total Calories (resting + active), mean per eligible source interval. Values above 25 kcal/min x interval minutes are excluded (decided 25 Nov 2026)", "kcal per source interval"),
         ("zero_HR", "RHR requires positive finite values. Physiological stress requires a positive finite HR reference. No separate mean-HR feature", None),
         ("HRV", "SDNN sample standard deviation; RMSSD and SD2/SD1 use supported original adjacent pairs; no concatenation across removed observations", None),
         ("advanced_HRV", "LF/HF: median of finite complete 300s epoch estimates; SampEn: median of finite 1000-contiguous-beat epochs. Existing math/parameters retained", None),

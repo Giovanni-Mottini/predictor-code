@@ -36,7 +36,9 @@ def main(argv=None) -> int:
     garmin_command.add_argument("--end-exclusive", help="Local end date, exclusive")
     for command in (garmin_command, clinical_command, assessment_command):
         command.add_argument("--window-minutes", type=int, default=30)
-        command.add_argument("--calorie-rate", type=float, default=25)
+        command.add_argument("--calorie-rate", type=float, default=25, help="kcal/min; calories above this rate x interval minutes are excluded")
+        command.add_argument("--keep-high-calories", action="store_true",
+                             help="Keep calories above --calorie-rate for review instead of excluding them (method before 25 Nov 2026)")
         command.add_argument("--max-pair-gap-seconds", type=float, default=5)
         command.add_argument("--max-selected-rows", type=int, default=2_000_000)
         command.add_argument("--hrv-entropy-beats", type=int, default=1000, help="Contiguous beats per entropy epoch (1000–10000)")
@@ -75,6 +77,7 @@ def main(argv=None) -> int:
         from .garmin import GarminConfig
         from .garmin_workflow import runs_from_ranges, run_windows
         config = GarminConfig(window_minutes=args.window_minutes, calorie_rate_kcal_min=args.calorie_rate,
+                              exclude_high_calorie_rate=not args.keep_high_calories,
                               max_pair_gap_s=args.max_pair_gap_seconds,max_selected_rows=args.max_selected_rows,
                               hrv_entropy_beats=args.hrv_entropy_beats,hrv_clock_tolerance_ms=args.hrv_clock_tolerance_ms,
                               hrv_method=args.hrv_method, bbi_screens=args.bbi_screens,

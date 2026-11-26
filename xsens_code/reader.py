@@ -53,6 +53,8 @@ class XsensRecording:
     descriptor: dict
     descriptor_sha256: str
     checked_tables: dict = field(default_factory=dict)
+    # Set only by "xsens-features --edited-markers": repetition windows saved by the marker editor.
+    edited_markers: dict | None = None
 
     def table_descriptor(self, sheet: str) -> dict:
         candidates = [t for t in self.descriptor.get("tables", []) if t.get("source_sheet") == sheet]

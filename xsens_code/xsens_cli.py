@@ -20,7 +20,7 @@ from shared_code.io import atomic_json
 from shared_code.artifacts import CANONICAL_FIELDS, atomic_csv, now
 from shared_code.reader import DataContractError, SubjectReader
 from shared_code.progress import ProgressReporter
-from .xsens import ACTIVITIES, window_kind
+from .xsens import ACTIVITIES, EDITED_MARKER_POLICY, edited_marker_selection, window_kind
 from .xsens_features import FEATURE_NAMES, LEVER_FIELDS, XsensConfig, extract_xsens
 from .xsens_dtw import pair_hand_dtw
 
@@ -32,8 +32,11 @@ FEATURE_FIELDS = ("participant_key", *CANONICAL_FIELDS, "activity", "window_kind
 
 def extract_subject(reader: SubjectReader, config: XsensConfig, *, sessions=None, timepoints=None, tasks=None,
                     limb_conditions=None, anatomical_sides=None, activities=None,
-                    progress: ProgressReporter | None = None) -> dict:
-    """``tasks`` keeps only those task numbers (so no B&B/mot); ``activities`` filters by activity name."""
+                    progress: ProgressReporter | None = None, edited_markers: Path | None = None) -> dict:
+    """``tasks`` keeps only those task numbers (so no B&B/mot); ``activities`` filters by activity name.
+
+    ``edited_markers``: folder of the marker editor's files; a task recording that has one takes its
+    repetitions from it (any number, also start/end pairs) instead of the five source markers."""
     wanted = set(ACTIVITIES if activities is None else activities)
     records = [r for r in reader.select(modality="xsens", sessions=sessions, timepoints=timepoints, tasks=tasks,
                                         limb_conditions=limb_conditions, anatomical_sides=anatomical_sides)
@@ -56,6 +59,8 @@ def extract_subject(reader: SubjectReader, config: XsensConfig, *, sessions=None
         try:
             recording = reader.open_xsens(record)
             metadata["recorded_at_utc"] = recording.descriptor.get("recorded_at_utc")
+            if edited_markers is not None and metadata["window_kind"] == "repetition":
+                recording.edited_markers = edited_marker_selection(edited_markers, recording)
             extraction = extract_xsens(recording, config)
             if hashlib.sha256(recording.descriptor_path.read_bytes()).hexdigest() != recording.descriptor_sha256:
                 raise DataContractError("metadata_changed_during_read", "Recording descriptor changed during extraction")
@@ -166,6 +171,9 @@ def extraction_status(subjects: list[dict]) -> int:
 def run_xsens(args, readers: list[SubjectReader], output: Path, *, progress: ProgressReporter | None = None) -> int:
     config = XsensConfig(args.cutoff_hz, args.sparc_cutoff_hz)
     method = method_document(config)
+    edited = getattr(args, "edited_markers", None)
+    if edited is not None:   # recorded in method.json; method_sha256 (processing settings) stays the same
+        method["windows"]["repetition"]["edited_markers"] = {**EDITED_MARKER_POLICY, "directory": str(edited)}
     started = now()
     subjects = []
     for index, reader in enumerate(readers, 1):
@@ -173,13 +181,14 @@ def run_xsens(args, readers: list[SubjectReader], output: Path, *, progress: Pro
             progress.update(f"Starting participant {reader.participant_key}", completed=index - 1, total=len(readers))
         subjects.append(extract_subject(reader, config, sessions=args.session, timepoints=args.timepoint, tasks=args.task,
                                         limb_conditions=args.limb_condition, anatomical_sides=args.anatomical_side,
-                                        activities=args.activity, progress=progress))
+                                        activities=args.activity, progress=progress, edited_markers=edited))
         if progress:
             progress.update(f"Participant processed: {reader.participant_key}", completed=index, total=len(readers))
     report = {"report_version": 1, "started_at": started, "finished_at": now(), "method": method,
               "filters": {"sessions": args.session, "timepoints": args.timepoint, "tasks": args.task,
                           "activities": args.activity or list(ACTIVITIES),
-                          "limb_conditions": args.limb_condition, "anatomical_sides": args.anatomical_side},
+                          "limb_conditions": args.limb_condition, "anatomical_sides": args.anatomical_side,
+                          **({"edited_markers": str(edited)} if edited is not None else {})},
               "ready_for_features": False, "subjects": subjects}
     if progress:
         progress.update(f"Writing feature tables and metadata to {output}")

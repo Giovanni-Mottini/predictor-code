@@ -63,9 +63,9 @@ def test_half_open_periods_weighted_means_daily_and_hrv_counts(pilot):
     # Independent source calculation: zero-wear observation (30) is excluded.
     assert f.loc[("T1", "steps_mean"), "value"] == pytest.approx((10 + 20 + 40 + 50) / 4)
     assert f.loc[("T1", "steps_mean"), "used_source_observations"] == 4
-    # The reviewed 600-kcal window is excluded without modifying the source value.
+    # The 600-kcal interval is excluded at preparation (above 25 kcal/min), source value untouched.
     assert f.loc[("T1", "total_calories_kcal_mean"), "value"] == pytest.approx((10 + 20 + 40) / 3)
-    assert f.loc[("T1", "total_calories_kcal_mean"), "review_excluded_units"] == 1
+    assert f.loc[("T1", "total_calories_kcal_mean"), "review_excluded_units"] == 0
     assert f.loc[("T1", "rhr_avg"), "value"] == 60
     assert f.loc[("T1", "rhr_avg"), "used_units"] == 1
     assert f.loc[("T1", "sleep_score"), "used_units"] == 1
@@ -76,7 +76,7 @@ def test_half_open_periods_weighted_means_daily_and_hrv_counts(pilot):
     assert pd.isna(f.loc[("T0", "SDNN"), "value"])
     assigned = pd.read_parquet(output / "aligned_windows.parquet")
     assert assigned.loc[assigned["window_start"].eq(pd.Timestamp("2030-04-10")), "period_id"].item() == "T2"
-    assert assigned.loc[assigned["window_start"].eq(pd.Timestamp("2030-04-09 00:30")), "total_calories_kcal_mean"].item() == 600
+    assert pd.isna(assigned.loc[assigned["window_start"].eq(pd.Timestamp("2030-04-09 00:30")), "total_calories_kcal_mean"].item())
     links = pd.read_csv(output / "xsens_links.csv")
     assert set(links.loc[links["period_id"].eq("T1"), "recording_id"]) == {"xs1", "xs2"}
     assert links.loc[links["period_id"].eq("T2"), "recording_id"].tolist() == ["xs3"]

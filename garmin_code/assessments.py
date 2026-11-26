@@ -294,7 +294,7 @@ def run_assessments(subject_paths, output, *, override_path=None, config=None, p
               "hrv_sources": {"Summary": "all HRV from raw BBI",
                               "Summary_Fitrockr_HRV": "RMSSD, SDNN, LF/HF, SD2/SD1 = means of Fitrockr 5-min detailed-health-log values (SD2/SD1 = 1/SD1_SD2); no SampEn; other features identical"},
               "aggregation": "T1-T10; Xsens date +/-2 local calendar days unless an explicit window is given; T1 starts no earlier than the first wholly worn day and ends before T2's Xsens day; six-hour block-days need >=50% wear; equal mean of valid daily values; RHR/sleep once per date; fewer than 3 valid days -> blank",
-              "calories": "total calories source interval means; existing high-rate warning retained; upper-limit decision deferred",
+              "calories": "total calories source interval means; values above 25 kcal/min x interval minutes excluded (25 Nov 2026)",
               "T0": "separate exploratory clinical-date +/-2 window; shared days reported; excluded from primary T1-T10 table",
               "scientifically_validated": False,
               "implementation_sha256": implementation_hashes(("garmin_code/assessments.py", "garmin_code/assessment_export.py", "predictor_import/clinical.py"))}

@@ -233,7 +233,7 @@ def run_windows(runs: list[GarminSubject], output: Path, *, progress: ProgressRe
         )
     lines += [
         "",
-        "Window features are means of eligible measurements whose start falls in [start,end). Total, active and legacy unspecified calories stay separate. High-rate calorie means remain provisional in the feature table and become null in normalization. No source values are repaired.",
+        "Window features are means of eligible measurements whose start falls in [start,end). Total, active and legacy unspecified calories stay separate. Calories above the rate limit (default 25 kcal/min x interval minutes) are excluded; with --keep-high-calories they stay in the feature table for review and become null in normalization. No source values are repaired.",
         "",
         "Six-hour HRV is repeated across smaller windows. Time-domain pairs respect original rows, UTC gaps and declared gap markers. Advanced HRV uses continuous source-row/UTC segments: complete 300s LF/HF epochs, separate 3600s VLF epochs, exact contiguous beat epochs for ApEn/SampEn, and Poincare statistics on accepted pairs. Block summaries are medians of finite epochs, with counts/statuses. Raw BBI only; pairs whose UTC step differs from the following BBI by more than the clock tolerance are broken. Missing epochs stay null. hrv_blocks contains one row per block; hrv_epochs retains source slices and numerical evidence. These descriptors do not certify stationarity or sinus rhythm.",
         "",

@@ -614,3 +614,56 @@ def test_cli_selects_every_activity_by_default_and_filters_by_activity_or_task(w
         selected = tmp_path / f"only-{value}"
         assert main(["xsens-features", str(whole_subject), "--output", str(selected), flag, value, "--no-progress"]) == 0
         assert {r["activity"] for r in pq.read_table(selected / "features.parquet").to_pylist()} == expected
+
+
+def edited_file(folder, recording, windows, mode="start_end", **changes):
+    """A marker editor file for this recording (same layout as marker_editor/markers)."""
+    parts = recording.descriptor_path.parent.parts
+    path = folder / parts[-5] / parts[-4] / parts[-2] / (parts[-1] + ".json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"format": "predictor-marker-edit-v2", "source_sha256": recording.descriptor["source_sha256"],
+        "repetition_mode": mode, "marker_frames": sorted({f for w in windows for f in w}),
+        "repetitions": [{"repetition": k + 1, "start_frame": a, "end_frame_exclusive": b} for k, (a, b) in enumerate(windows)],
+        "saved_at": "2026-11-14T00:00:00+00:00", **changes}))
+    return path
+
+
+def test_edited_markers_give_any_number_of_start_end_repetitions_only_when_asked(full_subject, tmp_path):
+    reader = SubjectReader(full_subject)
+    right = next(reader.open_xsens(r) for r in reader.select(modality="xsens") if r["anatomical_side"] == "right")
+    marker_rows = right.read_table("Markers").to_pydict()
+    edited = tmp_path / "edited"
+    windows = [[1010, 1040], [1050, 1085], [1090, 1120], [1125, 1150], [1160, 1211 - 1]]   # five, with pauses
+    path = edited_file(edited, right, windows)
+    default, output = tmp_path / "default", tmp_path / "with-edited"
+    assert main(["xsens-features", str(full_subject), "--output", str(default), "--no-progress"]) == 0
+    assert main(["xsens-features", str(full_subject), "--output", str(output), "--no-progress",
+                 "--edited-markers", str(edited)]) == 1          # the fifth repetition has no partner for DTW
+    before, after = (pq.read_table(d / "features.parquet").to_pylist() for d in (default, output))
+    assert {r["marker_policy_id"] for r in before} == {"2026-10-07-five-markers-strict-v1"}   # the file alone changes nothing
+    rows = [r for r in after if r["anatomical_side"] == "right"]
+    assert [[r["start_frame"], r["end_frame_exclusive"]] for r in rows] == windows
+    assert [r["repetition"] for r in rows] == [1, 2, 3, 4, 5] and [r["n_samples"] for r in rows] == [30, 35, 30, 25, 50]
+    assert {r["marker_policy_id"] for r in rows} == {"xsens-edited-markers-v1"}
+    assert all(r[f] is not None for r in rows for f in FEATURE_NAMES if f != "dtw_hand")
+    assert [r["dtw_hand"] is not None for r in rows] == [True] * 4 + [False]
+    # The arm without a file keeps the five source markers and every value except its distance to the edited arm.
+    left_before, left_after = ([r for r in t if r["anatomical_side"] == "left"] for t in (before, after))
+    assert len(left_after) == 4
+    assert all(a[f] == b[f] for a, b in zip(left_before, left_after)
+               for f in (*FEATURE_NAMES, "start_frame", "end_frame_exclusive", "marker_policy_id", "method_sha256") if f != "dtw_hand")
+    method = json.loads((output / "method.json").read_text())
+    assert method["windows"]["repetition"]["edited_markers"]["directory"] == str(edited)
+    assert "edited_markers" not in json.loads((default / "method.json").read_text())["windows"]["repetition"]
+    assert right.read_table("Markers").to_pydict() == marker_rows
+    # A file saved for another version of the source, or with overlapping repetitions, fails that recording visibly.
+    for code, bad in (("edited_markers_stale", {"source_sha256": "0" * 64}),
+                      ("boundary_order_invalid", {"repetitions": [{"repetition": 1, "start_frame": 1010, "end_frame_exclusive": 1100},
+                                                                   {"repetition": 2, "start_frame": 1090, "end_frame_exclusive": 1150}]})):
+        edited_file(edited, right, windows, **bad)
+        assert main(["xsens-features", str(full_subject), "--output", str(output), "--no-progress",
+                     "--edited-markers", str(edited)]) == 1
+        result = next(r for r in json.loads((output / "metadata.json").read_text())["subjects"][0]["results"]
+                      if r["anatomical_side"] == "right")
+        assert result["status"] == "failed" and result["flags"][0]["code"] == code
+    assert path.is_file()
