@@ -17,6 +17,7 @@
 !/garmin_code/
 !/feature_importance_code/
 !/correlation_code/
+!/fitrockr_sync/
 
 # Personal implementation walkthrough; share separately when needed.
 /ANGLE_UNWRAPPING_AND_QUATERNION_ROM.local.md

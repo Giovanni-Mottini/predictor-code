@@ -1,0 +1,202 @@
+FITROCKR SYNC - task for Claude Code on the Ubuntu machine
+
+How to start: open Claude Code at the repository root and say
+"Read fitrockr_sync/PROMPT.txt and do what it says."
+
+
+1. GOAL
+
+Build a small downloader that copies all Garmin data of our Fitrockr tenant
+to this machine through the Fitrockr API, in two modes:
+
+- backfill   one-time download of the full history of every user
+- daily      every day, a small download of only what is new
+
+Plus one HTML page that shows the progress of both.
+
+Fitrockr access ends on 11 Dec 2026 (contract change). The backfill must be
+finished and checked well before that date. Access after it is unknown.
+
+
+2. WHAT IS ALREADY KNOWN ABOUT THE API
+
+Docs: https://api.fitrockr.com/public/docs/html5
+(several examples in the docs have copy-paste errors: test every field)
+
+- base URL       https://api.fitrockr.com
+- headers        X-API-Key and X-Tenant
+- users          GET /v2/users?page=0&size=...
+- last sync      GET /v1/users/{id}/profile  -> field lastSync
+- start export   POST /v1/dataExports
+                 startDate / endDate as dd.MM.yyyy, timeZoneCode,
+                 format csv.zip | json.zip | xlsx,
+                 allUsers or users [{id, type:"user", name}],
+                 exportUserId = id of the user who owns the API key,
+                 one boolean per table: exportBbi, exportHeartRate,
+                 exportSleep, exportStress, exportRespiration, ...
+- poll           GET /v1/dataExports/{id} until status "Ready"
+- download       GET /v1/dataExports/{id}/download (content type not documented)
+
+Not known yet, find out first:
+- does exportBbi give RAW beat-to-beat intervals? Our pipeline reads only
+  bbi-(raw).csv. If the API gives only the enhanced file, stop and tell me.
+- longest date range one export accepts, and how long an export takes
+- is endDate inclusive or exclusive
+- layout of the zip (one folder per user? file names?)
+- rate limits (HTTP 429?) and how many exports may run at the same time
+- earliest date with data per user (profile, first sync, or just probe)
+
+
+3. WHAT THE OUTPUT MUST LOOK LIKE
+
+A manual Fitrockr export (October 2026 layout, csv) is one folder per
+person with these files. Our pipeline (garmin_code, predictor_import) reads
+them by these exact names:
+
+  activities.csv            bbi-(enhanced).csv       bbi-(raw).csv
+  daily-health-log.csv      daily-steps-by-date.csv  detailed-health-log.csv
+  heart-rate.csv            hourly-health-log.csv    motion-intensity.csv
+  respiration.csv           resting-heart-rate.csv   skin-temperature.csv
+  sleep.csv                 spo2-logging.csv         spo2.csv
+  step-log.csv              stress.csv               user.csv
+  zero-crossing.csv
+
+So:
+- request csv.zip with every export flag turned on
+- time zone Europe/Rome (the manual exports use the person's own zone,
+  column "Selected Time Zone"); check it against a manual export
+- for each user, build one merged folder with the files above, same
+  headers, same delimiter, same column order as a manual export
+
+
+4. HOW TO DOWNLOAD
+
+Data folder: outside the repository, path set in the config
+(default ~/fitrockr_data). Layout:
+
+  raw/<user id>/<start>_<end>_<download time>.zip   never changed or deleted
+  merged/<user name>/                              files from section 3
+  state.json                                       what is done, per user
+  logs/                                            one log per run
+  progress.html                                    section 6
+
+Backfill
+- one export per user per calendar month (change the chunk size if the
+  tests in section 2 say so; BBI raw is large)
+- resumable: a rerun skips chunks already downloaded and checked
+- at most 2 exports running at the same time unless the API allows more
+- a failed chunk is retried 3 times with growing waits, then marked failed
+  and the run goes on with the others
+
+Daily
+- per user, read lastSync. If it has not changed since the last run,
+  download nothing for that user.
+- if it changed, download from
+      the earlier of (last downloaded day - 7 days) and (day of the
+      previous lastSync - 2 days)
+  up to today.
+  Why: patients sync rarely, sometimes after weeks. A sync brings all the
+  days since the previous sync, so a fixed 7-day window would miss data.
+- run once a day with a systemd user timer (Persistent=true so a missed
+  run is done at boot; loginctl enable-linger so it runs without a login).
+  A lock (flock) stops two runs from overlapping.
+- after the end date in the config (2026-12-11) the timer run only
+  records "Fitrockr access ended" on the page and exits
+
+Merging into merged/<user name>/
+- for every table and every day: the rows from the newest download
+  covering that day replace older rows for that day (do not just append:
+  a late sync can complete a day that was partial before)
+- sort by time, write atomically (temp file, then rename)
+- the merge is correct only if: merging monthly chunks of one user gives
+  the same rows as one single export of the same period. Test this on one
+  user and one or two months.
+
+
+5. SAFETY AND PRIVACY
+
+- API key and tenant go in a config file outside git, readable only by me
+  (chmod 600), e.g. ~/.config/fitrockr_sync/env. Commit only an example
+  named fitrockr_sync/env.example (the repo .gitignore ignores .env,
+  .env.*, *.json, *.csv, *.zip, *.log: keep that in mind for file names).
+- never print the key in logs, errors, the HTML page or the chat
+- the data and the HTML page contain patient codes and real dates: they
+  stay in the data folder, never in the repository, never uploaded or
+  published anywhere (no claude.ai artifacts, no public web server)
+- tests use made-up codes FG91-FG95 and dates in 2029-2030, never real ones
+- never delete anything under raw/
+
+
+6. PROGRESS PAGE (progress.html in the data folder)
+
+One self-contained HTML file: no CDN, no external files, opens from disk
+(file://) and reloads itself every 30 seconds. Rewritten atomically after
+every step, by both modes.
+
+Show, in plain words (no letter codes or abbreviations):
+- top line: what is running now (backfill / daily / idle), since when,
+  current export and its status, chunks done of total, an overall bar,
+  estimated time left
+- a grid: one row per user, one column per month, each cell coloured with
+  a word in it: downloaded, partial, failed, waiting, no data
+- a table per user: Fitrockr lastSync, first and last day downloaded,
+  days since last sync, size on disk, last error in one sentence
+- the last 30 daily runs: start, end, users updated, new days, result
+- warnings at the top: failed chunks, wrong or expired key, user not
+  synced for more than 7 days, free disk space under 5 GB, days left
+  before 11 Dec 2026
+- light and dark readable, works on a phone width
+
+If I want to see it from another computer: a command that serves the
+folder on localhost only, to reach through an ssh tunnel. Write it in the
+README, do not start it by default.
+
+
+7. CODE
+
+- package fitrockr_sync/ in this repository, Python 3, standard library
+  plus requests (own requirements.txt, own .venv in the repo root or in
+  fitrockr_sync/, both are git-ignored)
+- command line:
+    python -m fitrockr_sync check      key works, list users, lastSync each
+    python -m fitrockr_sync backfill   [--user NAME] [--dry-run]
+    python -m fitrockr_sync daily      [--dry-run]
+    python -m fitrockr_sync merge      rebuild merged/ from raw/
+    python -m fitrockr_sync page       rewrite progress.html from state
+  --dry-run prints the list of exports it would request, requests nothing
+- tests with a fake API (no network): chunk planning, the daily window
+  rule, resume after a crash, merge replacing days, page rendering
+- the systemd unit and timer files in fitrockr_sync/systemd/, with the
+  install commands in the README
+- fitrockr_sync/README.txt as a plain text file: a title line, a few
+  CAPITALISED numbered sections, short "- name   explanation" lists, no
+  Markdown tables. What it does, setup, the commands, where the data is,
+  how to check it is working, what to do when the key expires.
+- do not change other folders of the repository
+
+
+8. ORDER OF WORK - stop where it says STOP
+
+ 1. Read the API docs. If the config file does not exist yet, create it
+    (chmod 600) with empty values and ask me to fill in the key and
+    tenant myself in an editor. Never ask me to paste the key into the
+    chat, and never print or read the key back to me.
+ 2. check: list users, lastSync of each.
+ 3. One small export: one user, 2-3 days. Look at the zip: file names,
+    headers, raw BBI present, time zone, endDate inclusive or not.
+ 4. STOP: report what you found in section 2 "not known yet". I will
+    give you a manual export of one person to compare with.
+ 5. Compare API files with the manual export for the same days: same
+    files, same headers, same row counts and values. Explain every
+    difference.
+ 6. Build the package, tests, page. Run the tests.
+ 7. backfill --dry-run: how many exports, estimated time and disk space.
+ 8. STOP: show me the plan and the page with nothing downloaded yet.
+ 9. Run the backfill in the background (it must survive closing the
+    terminal), check the page fills in, tell me how to follow it.
+10. When the backfill is done: run the merge test from section 4 and a
+    second comparison with a manual export.
+11. STOP: show me, then install the daily timer and run daily once by
+    hand.
+12. Commit the code (never data, never the config with the key) on a
+    branch named fitrockr-sync. Ask me before pushing.
